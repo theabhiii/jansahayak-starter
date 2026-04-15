@@ -106,7 +106,9 @@ class SarvamService:
                 system_prompt = (
                     "You are a helpful multilingual citizen services assistant. "
                     f"Respond ONLY in language code {normalized_response}. "
-                    "Keep responses concise and grounded in provided context."
+                    "Keep responses concise and grounded in provided context. "
+                    "Return only the final user-facing answer. "
+                    "Never reveal internal reasoning, analysis, planning steps, or self-talk."
                 )
                 body = {
                     "model": self.settings.sarvam_chat_model,
@@ -130,8 +132,9 @@ class SarvamService:
                         .get("content")
                     )
                     if isinstance(text, str) and text.strip():
+                        cleaned_text = self._strip_meta_reasoning(text.strip())
                         return {
-                            "text": text.strip(),
+                            "text": cleaned_text,
                             "language": normalized_response,
                             "provider": "sarvam-chat",
                             "request_payload": payload,
@@ -141,7 +144,7 @@ class SarvamService:
                 logger.warning("sarvam_chat_request_failed conversation_id=%s err=%s", conversation_id, str(exc))
 
         return {
-            "text": draft_answer,
+            "text": self._strip_meta_reasoning(draft_answer),
             "language": normalized_response,
             "provider": "mocked" if not self.is_configured() else "configured-fallback",
             "request_payload": payload,
@@ -177,6 +180,75 @@ class SarvamService:
             }
         )
         return messages
+
+    def normalize_user_input(
+        self,
+        *,
+        text: str,
+        detected_language: str | None,
+        conversation_id: str,
+        channel: str,
+    ) -> dict[str, Any]:
+        normalized_detected = normalize_language_code(detected_language) or "en-IN"
+        stripped = (text or "").strip()
+        payload = {
+            "text": stripped,
+            "detected_language": normalized_detected,
+            "target_language": "en-IN",
+            "conversation_id": conversation_id,
+            "channel": channel,
+        }
+        if not stripped:
+            return {
+                "text": stripped,
+                "source_language": normalized_detected,
+                "target_language": "en-IN",
+                "translated": False,
+                "provider": "noop-empty",
+                "request_payload": payload,
+            }
+        if normalized_detected == "en-IN":
+            return {
+                "text": stripped,
+                "source_language": normalized_detected,
+                "target_language": "en-IN",
+                "translated": False,
+                "provider": "noop-english",
+                "request_payload": payload,
+            }
+
+        logger.info(
+            "sravan_input_translate_request conversation_id=%s detected=%s channel=%s",
+            conversation_id,
+            normalized_detected,
+            channel,
+        )
+
+        translated = self.translate_text(
+            text=stripped,
+            target_language_code="en-IN",
+            source_language=normalized_detected,
+            force_translate=True,
+        )
+        translated_stripped = (translated or "").strip()
+        if translated_stripped:
+            return {
+                "text": translated_stripped,
+                "source_language": normalized_detected,
+                "target_language": "en-IN",
+                "translated": translated_stripped != stripped,
+                "provider": "sarvam-translate-input",
+                "request_payload": payload,
+            }
+
+        return {
+            "text": stripped,
+            "source_language": normalized_detected,
+            "target_language": "en-IN",
+            "translated": False,
+            "provider": "input-translation-fallback",
+            "request_payload": payload,
+        }
 
     def translate_response_text(
         self,
@@ -288,14 +360,14 @@ class SarvamService:
         # Preferred path: Sarvam SDK call as shared by user.
         if self._sdk_client is not None:
             try:
+                sdk_source_code = normalize_language_code(source_language_code) or "auto"
                 resp = self._sdk_client.text.translate(
                     input=text,
-                    source_language_code=resolved_source_code,
+                    source_language_code=sdk_source_code,
                     target_language_code=resolved_target_code,
                     speaker_gender=self.settings.sarvam_speaker_gender,
                     mode=self.settings.sarvam_translate_mode,
                     model=self.settings.sarvam_translate_model,
-                    enable_preprocessing=self.settings.sarvam_enable_preprocessing,
                     numerals_format=self.settings.sarvam_numerals_format,
                 )
 
@@ -357,11 +429,25 @@ class SarvamService:
     def _fallback_translate(self, text: str, target_language_code: str) -> str:
         if target_language_code == "hi-IN":
             replacements = {
+                "Based on your location in": "आपके स्थान ",
+                ", here are the most relevant options:": " के आधार पर सबसे उपयुक्त विकल्प ये हैं:",
+                "Geo-specific coverage:": "भौगोलिक कवरेज:",
+                "recommendations are mapped to": "सुझाव",
+                "or available nationally.": "या राष्ट्रीय स्तर पर उपलब्ध हैं।",
+                "Eligibility check:": "पात्रता जांच:",
+                "Grievance routing:": "शिकायत मार्गदर्शन:",
+                "I could not find a direct scheme match, so I am sharing a location-aware fallback for": "सीधा योजना मिलान नहीं मिला, इसलिए मैं स्थान-आधारित सुझाव साझा कर रहा/रही हूँ:",
+                "Please share whether you need a farmer, student, women entrepreneur, or grievance-related scheme.": "कृपया बताएं कि आपको किसान, छात्र, महिला उद्यमी या शिकायत से जुड़ी योजना चाहिए।",
                 "Eligibility check": "Paatrata jaanch",
                 "Grievance routing": "Shikayat routing",
-                "Benefits": "Laabh",
-                "Eligibility": "Paatrata",
-                "Application": "Aavedan",
+                "Benefits": "लाभ",
+                "Eligibility": "पात्रता",
+                "Application": "आवेदन",
+                "Residents of": "निवासी",
+                "Citizens": "नागरिक",
+                "Submit": "जमा करें",
+                "Apply through": "इसके माध्यम से आवेदन करें",
+                "in instalments.": "किस्तों में।",
             }
             translated = text
             for src, dst in replacements.items():
@@ -383,6 +469,181 @@ class SarvamService:
 
         return text
 
+    def _strip_meta_reasoning(self, text: str) -> str:
+        raw = (text or "").strip()
+        if not raw:
+            return raw
+
+        # If model adds meta preface before the real answer, keep the useful part.
+        anchors = [
+            "here are",
+            "based on your location",
+            "निम्नलिखित",
+            "यहाँ",
+            "ये विकल्प",
+            "options:",
+            "उत्तर:",
+        ]
+        lowered = raw.lower()
+        cut_idx = None
+        for anchor in anchors:
+            idx = lowered.find(anchor.lower())
+            if idx > 0:
+                cut_idx = idx if cut_idx is None else min(cut_idx, idx)
+        if cut_idx is not None:
+            prefix = lowered[:cut_idx]
+            if any(
+                token in prefix
+                for token in [
+                    "let me",
+                    "i need to",
+                    "i should",
+                    "thinking",
+                    "analysis",
+                    "विचार",
+                    "मुझे",
+                    "जाँच",
+                    "चेक",
+                ]
+            ):
+                raw = raw[cut_idx:].lstrip(" :-\n\t")
+
+        lines = [ln.strip() for ln in raw.splitlines()]
+        meta_tokens = [
+            "let me",
+            "i need to",
+            "i should",
+            "i will",
+            "analysis",
+            "thinking",
+            "विचार",
+            "मुझे",
+            "जाँच",
+            "check",
+            "history",
+        ]
+        pruned: list[str] = []
+        skipping = True
+        for line in lines:
+            if not line:
+                if not skipping:
+                    pruned.append(line)
+                continue
+            ll = line.lower()
+            is_meta = any(tok in ll for tok in meta_tokens)
+            if skipping and is_meta:
+                continue
+            skipping = False
+            pruned.append(line)
+
+        cleaned = "\n".join(pruned).strip()
+        return cleaned or raw
+
+    def transcribe_audio_bytes(
+        self,
+        *,
+        audio_bytes: bytes,
+        file_name: str = "audio.ogg",
+        mime_type: str = "audio/ogg",
+        language_code: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_language = normalize_language_code(language_code) or "unknown"
+        if not audio_bytes:
+            return {
+                "status": "error",
+                "detail": "Empty audio payload",
+                "transcript": "",
+                "language_code": normalized_language if normalized_language != "unknown" else "en-IN",
+                "provider": "none",
+            }
+
+        if self._sdk_client is not None:
+            try:
+                codec = self._content_type_to_codec(mime_type)
+                file_tuple = (file_name, audio_bytes, mime_type)
+                resp = self._sdk_client.speech_to_text.transcribe(
+                    file=file_tuple,
+                    model="saarika:v2.5",
+                    mode="transcribe",
+                    language_code=normalized_language,
+                    input_audio_codec=codec,
+                )
+
+                transcript = ""
+                resolved_language = normalize_language_code(language_code) or "en-IN"
+                if isinstance(resp, dict):
+                    transcript = (resp.get("transcript") or "").strip()
+                    resolved_language = normalize_language_code(resp.get("language_code")) or resolved_language
+                else:
+                    transcript = (getattr(resp, "transcript", "") or "").strip()
+                    resolved_language = normalize_language_code(getattr(resp, "language_code", None)) or resolved_language
+                    if not transcript and hasattr(resp, "model_dump"):
+                        data = resp.model_dump()
+                        transcript = (data.get("transcript") or "").strip()
+                        resolved_language = normalize_language_code(data.get("language_code")) or resolved_language
+
+                if transcript:
+                    return {
+                        "status": "ok",
+                        "detail": "Transcription successful",
+                        "transcript": transcript,
+                        "language_code": resolved_language,
+                        "provider": "sarvam-stt-sdk",
+                    }
+            except Exception as exc:
+                logger.warning("sarvam_stt_transcribe_failed err=%s", str(exc))
+
+        return {
+            "status": "mocked",
+            "detail": "STT unavailable, returning empty transcript fallback.",
+            "transcript": "",
+            "language_code": normalize_language_code(language_code) or "en-IN",
+            "provider": "stt-fallback",
+        }
+
+    def transcribe_audio_url(
+        self,
+        *,
+        media_url: str,
+        mime_type: str = "audio/ogg",
+        auth_username: str | None = None,
+        auth_password: str | None = None,
+        language_code: str | None = None,
+    ) -> dict[str, Any]:
+        if not media_url:
+            return {
+                "status": "error",
+                "detail": "Missing media URL",
+                "transcript": "",
+                "language_code": normalize_language_code(language_code) or "en-IN",
+                "provider": "none",
+            }
+
+        try:
+            auth: tuple[str, str] | None = None
+            if auth_username and auth_password:
+                auth = (auth_username, auth_password)
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                response = client.get(media_url, auth=auth)
+                response.raise_for_status()
+                content_type = response.headers.get("Content-Type", mime_type) or mime_type
+                file_name = self._guess_audio_filename(content_type)
+                return self.transcribe_audio_bytes(
+                    audio_bytes=response.content,
+                    file_name=file_name,
+                    mime_type=content_type,
+                    language_code=language_code,
+                )
+        except Exception as exc:
+            logger.warning("audio_download_failed url=%s err=%s", media_url, str(exc))
+            return {
+                "status": "error",
+                "detail": "Failed to download audio from media URL",
+                "transcript": "",
+                "language_code": normalize_language_code(language_code) or "en-IN",
+                "provider": "download-failed",
+            }
+
     def text_to_speech(self, text: str, language_code: str) -> dict:
         normalized_language = normalize_language_code(language_code) or "en-IN"
         if not self.is_configured():
@@ -390,18 +651,77 @@ class SarvamService:
             return {"status": "mocked", "detail": f"TTS fallback used for {normalized_language}", "audio_base64": fake_audio}
         return {"status": "todo", "detail": "Implement Sarvam TTS SDK call here", "audio_base64": None}
 
-    def speech_to_text(self, transcript_hint: str | None = None, language_code: str | None = None) -> dict:
+    def speech_to_text(
+        self,
+        transcript_hint: str | None = None,
+        language_code: str | None = None,
+        audio_base64: str | None = None,
+        mime_type: str | None = None,
+    ) -> dict:
         normalized_language = normalize_language_code(language_code) or "en-IN"
-        if not self.is_configured():
+        if audio_base64:
+            try:
+                audio_bytes = base64.b64decode(audio_base64, validate=True)
+                stt = self.transcribe_audio_bytes(
+                    audio_bytes=audio_bytes,
+                    file_name=self._guess_audio_filename(mime_type or "audio/ogg"),
+                    mime_type=mime_type or "audio/ogg",
+                    language_code=normalized_language,
+                )
+                if stt.get("transcript"):
+                    return stt
+            except Exception as exc:
+                logger.warning("stt_audio_base64_decode_failed err=%s", str(exc))
+
+        if transcript_hint:
             return {
                 "status": "mocked",
-                "detail": "STT fallback used. Wire audio upload to Sarvam when key is available.",
-                "transcript": transcript_hint or "",
+                "detail": "Using transcript hint fallback.",
+                "transcript": transcript_hint,
                 "language_code": normalized_language,
+                "provider": "transcript-hint",
             }
+
         return {
-            "status": "todo",
-            "detail": "Implement Sarvam STT SDK call here",
-            "transcript": transcript_hint or "",
+            "status": "mocked",
+            "detail": "No transcript available. Provide audio_base64 or transcript_hint.",
+            "transcript": "",
             "language_code": normalized_language,
+            "provider": "stt-fallback",
         }
+
+    def _content_type_to_codec(self, content_type: str) -> str:
+        lowered = (content_type or "").lower()
+        if "wav" in lowered:
+            return "wav"
+        if "mpeg" in lowered or "mp3" in lowered:
+            return "mp3"
+        if "aac" in lowered:
+            return "aac"
+        if "webm" in lowered:
+            return "webm"
+        if "m4a" in lowered or "mp4" in lowered:
+            return "mp4"
+        if "flac" in lowered:
+            return "flac"
+        if "opus" in lowered or "ogg" in lowered:
+            return "ogg"
+        return "ogg"
+
+    def _guess_audio_filename(self, content_type: str) -> str:
+        lowered = (content_type or "").lower()
+        if "wav" in lowered:
+            return "audio.wav"
+        if "mpeg" in lowered or "mp3" in lowered:
+            return "audio.mp3"
+        if "aac" in lowered:
+            return "audio.aac"
+        if "webm" in lowered:
+            return "audio.webm"
+        if "m4a" in lowered or "mp4" in lowered:
+            return "audio.m4a"
+        if "flac" in lowered:
+            return "audio.flac"
+        if "opus" in lowered or "ogg" in lowered:
+            return "audio.ogg"
+        return "audio.bin"

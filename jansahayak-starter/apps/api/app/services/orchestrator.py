@@ -73,6 +73,7 @@ class Orchestrator:
         self.session_history: dict[str, list[dict[str, str]]] = {}
         self.session_last_results: dict[str, list[dict[str, str]]] = {}
         self.session_profiles: dict[str, dict[str, Any]] = {}
+        self.session_welcome_sent: set[str] = set()
 
     def answer(
         self,
@@ -82,10 +83,19 @@ class Orchestrator:
         language_code: str | None = None,
         location_hint: str | None = None,
     ) -> dict:
-        detection = detect_language(message)
+        raw_message = (message or "").strip()
+        detection = detect_language(raw_message)
         session_language = self._resolve_session_language(session_id, detection, language_code)
+        include_welcome = session_id not in self.session_welcome_sent
+        normalized_input = self.sarvam.normalize_user_input(
+            text=raw_message,
+            detected_language=detection.language_code,
+            conversation_id=session_id,
+            channel=channel,
+        )
+        model_message = (normalized_input.get("text") or raw_message).strip()
         history = self.session_history.get(session_id, [])
-        if not self._is_in_scope_query(message):
+        if not self._is_in_scope_query(model_message):
             out_text = self._out_of_scope_message()
             translated = self.sarvam.translate_response_text(
                 text=out_text,
@@ -95,7 +105,9 @@ class Orchestrator:
                 channel=channel,
             )
             final_text = translated["text"]
-            self._append_history(session_id, "user", message)
+            if include_welcome:
+                final_text = self._with_welcome_intro(session_id, final_text)
+            self._append_history(session_id, "user", model_message)
             self._append_history(session_id, "assistant", final_text)
             return {
                 "session_id": session_id,
@@ -115,6 +127,10 @@ class Orchestrator:
                 "feedback_token": str(uuid4()),
                 "language_trace": {
                     "detected_language": detection.language_code,
+                    "input_language": normalized_input.get("source_language", detection.language_code),
+                    "input_normalized_to": normalized_input.get("target_language", "en-IN"),
+                    "input_translation_applied": normalized_input.get("translated", False),
+                    "normalized_user_message": model_message,
                     "sent_response_language": session_language,
                     "received_language": session_language,
                     "mismatch_detected": False,
@@ -126,12 +142,12 @@ class Orchestrator:
                 "profile": self.session_profiles.get(session_id, self._empty_profile()).copy(),
                 "follow_up_question": None,
                 "follow_up_options": [],
-            }
+        }
         profile = self.session_profiles.setdefault(session_id, self._empty_profile())
-        self._update_profile_from_message(profile, message, location_hint)
-        profile["intent"] = self._detect_intent(message, history)
+        self._update_profile_from_message(profile, model_message, location_hint)
+        profile["intent"] = self._detect_intent(model_message, history)
 
-        profiling_prompt = self._next_profiling_prompt(profile, message, location_hint)
+        profiling_prompt = self._next_profiling_prompt(profile, model_message, location_hint)
         if profiling_prompt is not None:
             prompt_text, options = profiling_prompt
             final_prompt = self._localize_profile_text(
@@ -140,13 +156,15 @@ class Orchestrator:
                 conversation_id=session_id,
                 channel=channel,
             )
+            if include_welcome:
+                final_prompt = self._with_welcome_intro(session_id, final_prompt)
             localized_options = self._localize_follow_up_options(
                 options=options,
                 target_language=session_language,
                 conversation_id=session_id,
                 channel=channel,
             )
-            self._append_history(session_id, "user", message)
+            self._append_history(session_id, "user", model_message)
             self._append_history(session_id, "assistant", final_prompt)
             return {
                 "session_id": session_id,
@@ -165,6 +183,10 @@ class Orchestrator:
                 "feedback_token": str(uuid4()),
                 "language_trace": {
                     "detected_language": detection.language_code,
+                    "input_language": normalized_input.get("source_language", detection.language_code),
+                    "input_normalized_to": normalized_input.get("target_language", "en-IN"),
+                    "input_translation_applied": normalized_input.get("translated", False),
+                    "normalized_user_message": model_message,
                     "sent_response_language": session_language,
                     "received_language": session_language,
                     "mismatch_detected": False,
@@ -179,7 +201,7 @@ class Orchestrator:
             }
 
         last_results = self.session_last_results.get(session_id, [])
-        contextual_query = self._build_contextual_query(message, history, last_results)
+        contextual_query = self._build_contextual_query(model_message, history, last_results)
 
         location = resolve_location(
             text=contextual_query,
@@ -219,7 +241,7 @@ class Orchestrator:
         draft = self._answer_en(location, results, eligibility, grievance)
 
         ai_result = self.sarvam.generate_response(
-            query=message,
+            query=model_message,
             draft_answer=draft,
             detected_language=detection.language_code,
             response_language=session_language,
@@ -239,6 +261,8 @@ class Orchestrator:
             channel=channel,
         )
         final_answer = translated["text"]
+        if include_welcome:
+            final_answer = self._with_welcome_intro(session_id, final_answer)
 
         logger.info(
             "language_trace conversation_id=%s detected=%s sent=%s received=%s translated_target=%s confidence=%.3f",
@@ -251,7 +275,7 @@ class Orchestrator:
         )
 
         mismatch_detected = translated.get("target_language", session_language) != session_language
-        self._append_history(session_id, "user", message)
+        self._append_history(session_id, "user", model_message)
         self._append_history(session_id, "assistant", final_answer)
 
         return {
@@ -267,6 +291,10 @@ class Orchestrator:
             "feedback_token": str(uuid4()),
             "language_trace": {
                 "detected_language": detection.language_code,
+                "input_language": normalized_input.get("source_language", detection.language_code),
+                "input_normalized_to": normalized_input.get("target_language", "en-IN"),
+                "input_translation_applied": normalized_input.get("translated", False),
+                "normalized_user_message": model_message,
                 "sent_response_language": session_language,
                 "received_language": received_language,
                 "mismatch_detected": mismatch_detected,
@@ -628,6 +656,16 @@ class Orchestrator:
             "I can help only with Indian government schemes, eligibility, applications, service status, "
             "and grievance routing. Please ask a related citizen-service question."
         )
+
+    def _with_welcome_intro(self, session_id: str, text: str) -> str:
+        self.session_welcome_sent.add(session_id)
+        intro = (
+            "Welcome to JanSahayak, your AI assistant for government schemes and citizen services.\n"
+            "JanSahayak mein aapka swagat hai. Main sarkari yojanaon aur nagarik sevaon ke liye aapki sahayata karta hoon."
+        )
+        if not text.strip():
+            return intro
+        return f"{intro}\n\n{text}"
 
     def _language_error(self, language_code: str) -> str:
         if language_code == "hi-IN":

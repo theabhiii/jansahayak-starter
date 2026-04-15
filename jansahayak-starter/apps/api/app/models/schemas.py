@@ -51,6 +51,8 @@ class VoiceResponse(BaseModel):
 class SpeechToTextRequest(BaseModel):
     transcript_hint: Optional[str] = None
     language_code: Optional[str] = None
+    audio_base64: Optional[str] = None
+    mime_type: Optional[str] = None
 
 
 class WhatsAppWebhookRequest(BaseModel):

@@ -7,7 +7,27 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=Path('.env'))
+
+def _load_env_files() -> None:
+    """Load .env from cwd and parent directories so startup path does not matter."""
+    candidates: list[Path] = []
+    cwd = Path.cwd().resolve()
+    candidates.append(cwd / ".env")
+
+    module_path = Path(__file__).resolve()
+    for parent in module_path.parents:
+        candidates.append(parent / ".env")
+
+    seen: set[Path] = set()
+    for env_path in candidates:
+        if env_path in seen:
+            continue
+        seen.add(env_path)
+        if env_path.exists():
+            load_dotenv(dotenv_path=env_path, override=False)
+
+
+_load_env_files()
 
 
 @dataclass

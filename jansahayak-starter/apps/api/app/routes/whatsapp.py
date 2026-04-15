@@ -5,28 +5,446 @@ from xml.sax.saxutils import escape
 from ..core.config import get_settings
 from ..models.schemas import WhatsAppWebhookRequest
 from ..services.orchestrator import Orchestrator
+from ..services.sarvam_service import SarvamService
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 orchestrator = Orchestrator()
+sarvam = SarvamService()
+_pending_follow_up_options: dict[str, list[dict[str, str]]] = {}
+_pending_language_selection: dict[str, bool] = {}
+_pending_initial_message: dict[str, str] = {}
+_pending_feedback: dict[str, dict[str, object]] = {}
+
+_LANGUAGE_CHOICES: list[dict[str, str]] = [
+    {"value": "en-IN", "label": "English"},
+    {"value": "hi-IN", "label": "Hindi"},
+    {"value": "ta-IN", "label": "Tamil"},
+    {"value": "te-IN", "label": "Telugu"},
+    {"value": "kn-IN", "label": "Kannada"},
+    {"value": "ml-IN", "label": "Malayalam"},
+    {"value": "mr-IN", "label": "Marathi"},
+    {"value": "gu-IN", "label": "Gujarati"},
+    {"value": "bn-IN", "label": "Bengali"},
+    {"value": "ur-IN", "label": "Urdu"},
+]
+
+_FEEDBACK_REASON_CHOICES: list[dict[str, str]] = [
+    {"value": "simpler", "label": "Need simpler explanation"},
+    {"value": "not_relevant", "label": "Not relevant to my issue"},
+    {"value": "wrong_language", "label": "Wrong language"},
+    {"value": "missing_steps", "label": "Missing steps/documents"},
+]
+_TWILIO_MESSAGE_CHAR_LIMIT = 1400
+
+_UI_STRINGS: dict[str, dict[str, str]] = {
+    "en-IN": {
+        "reply_with_number": "Reply with a number:",
+        "select_language": "Please select your preferred language:",
+        "helpful_prompt": "Was this answer helpful?",
+        "feedback_reason_prompt": "Please share the reason (reply with a number):",
+        "feedback_thanks": "Thanks for your feedback. You can ask your next question.",
+        "end_session": "0. End session",
+        "session_ended": "Session ended. You can start a fresh chat anytime by sending a new message.",
+        "language_set": "Language set to {label}.",
+        "yes": "Yes",
+        "no": "No",
+    },
+    "hi-IN": {
+        "reply_with_number": "कृपया नंबर से जवाब दें:",
+        "select_language": "कृपया अपनी पसंदीदा भाषा चुनें:",
+        "helpful_prompt": "क्या यह जवाब मददगार था?",
+        "feedback_reason_prompt": "कृपया कारण बताएं (नंबर से जवाब दें):",
+        "feedback_thanks": "धन्यवाद। आप अगला सवाल पूछ सकते हैं।",
+        "end_session": "0. सत्र समाप्त करें",
+        "session_ended": "सत्र समाप्त कर दिया गया है। नई चैट शुरू करने के लिए नया संदेश भेजें।",
+        "language_set": "भाषा {label} सेट कर दी गई है।",
+        "yes": "हाँ",
+        "no": "नहीं",
+    },
+    "kn-IN": {
+        "reply_with_number": "ದಯವಿಟ್ಟು ಸಂಖ್ಯೆಯನ್ನು ಉತ್ತರವಾಗಿ ಕಳುಹಿಸಿ:",
+        "select_language": "ದಯವಿಟ್ಟು ನಿಮ್ಮ ಭಾಷೆಯನ್ನು ಆಯ್ಕೆಮಾಡಿ:",
+        "helpful_prompt": "ಈ ಉತ್ತರ ಸಹಾಯಕವಾಗಿತ್ತೇ?",
+        "feedback_reason_prompt": "ದಯವಿಟ್ಟು ಕಾರಣವನ್ನು ಆಯ್ಕೆಮಾಡಿ (ಸಂಖ್ಯೆ ಕಳುಹಿಸಿ):",
+        "feedback_thanks": "ಧನ್ಯವಾದಗಳು. ನೀವು ಮುಂದಿನ ಪ್ರಶ್ನೆಯನ್ನು ಕೇಳಬಹುದು.",
+        "end_session": "0. ಸೆಷನ್ ಮುಗಿಸಿ",
+        "session_ended": "ಸೆಷನ್ ಮುಗಿಸಲಾಗಿದೆ. ಹೊಸ ಚಾಟ್ ಆರಂಭಿಸಲು ಹೊಸ ಸಂದೇಶ ಕಳುಹಿಸಿ.",
+        "language_set": "ಭಾಷೆ {label} ಎಂದು ಹೊಂದಿಸಲಾಗಿದೆ.",
+        "yes": "ಹೌದು",
+        "no": "ಇಲ್ಲ",
+    },
+    "ta-IN": {
+        "reply_with_number": "எண்ணை பதிலாக அனுப்பவும்:",
+        "select_language": "தயவு செய்து உங்கள் மொழியைத் தேர்ந்தெடுக்கவும்:",
+        "helpful_prompt": "இந்த பதில் பயனுள்ளதாக இருந்ததா?",
+        "feedback_reason_prompt": "தயவு செய்து காரணத்தை பகிரவும் (எண்ணை அனுப்பவும்):",
+        "feedback_thanks": "நன்றி. உங்கள் அடுத்த கேள்வியை கேட்கலாம்.",
+        "end_session": "0. அமர்வை முடிக்கவும்",
+        "session_ended": "அமர்வு முடிக்கப்பட்டது. புதிய உரையாடலுக்கு புதிய செய்தி அனுப்பவும்.",
+        "language_set": "மொழி {label} ஆக அமைக்கப்பட்டது.",
+        "yes": "ஆம்",
+        "no": "இல்லை",
+    },
+    "te-IN": {
+        "reply_with_number": "దయచేసి నంబర్‌తో జవాబు ఇవ్వండి:",
+        "select_language": "దయచేసి మీ భాషను ఎంచుకోండి:",
+        "helpful_prompt": "ఈ సమాధానం ఉపయోగకరంగా ఉందా?",
+        "feedback_reason_prompt": "దయచేసి కారణం చెప్పండి (నంబర్‌తో జవాబు ఇవ్వండి):",
+        "feedback_thanks": "ధన్యవాదాలు. మీరు తదుపరి ప్రశ్న అడగవచ్చు.",
+        "end_session": "0. సెషన్ ముగించండి",
+        "session_ended": "సెషన్ ముగించబడింది. కొత్త చాట్ కోసం కొత్త సందేశం పంపండి.",
+        "language_set": "భాష {label}గా సెట్ అయింది.",
+        "yes": "అవును",
+        "no": "కాదు",
+    },
+    "ml-IN": {
+        "reply_with_number": "ദയവായി നമ്പർ ആയി മറുപടി നൽകുക:",
+        "select_language": "ദയവായി നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കൂ:",
+        "helpful_prompt": "ഈ മറുപടി സഹായകരമായിരുന്നോ?",
+        "feedback_reason_prompt": "ദയവായി കാരണം പങ്കിടൂ (നമ്പർ ആയി മറുപടി നൽകൂ):",
+        "feedback_thanks": "നന്ദി. നിങ്ങൾക്ക് അടുത്ത ചോദ്യം ചോദിക്കാം.",
+        "end_session": "0. സെഷൻ അവസാനിപ്പിക്കുക",
+        "session_ended": "സെഷൻ അവസാനിപ്പിച്ചു. പുതിയ ചാറ്റിനായി പുതിയ സന്ദേശം അയക്കൂ.",
+        "language_set": "ഭാഷ {label} ആയി സജ്ജമാക്കി.",
+        "yes": "അതെ",
+        "no": "ഇല്ല",
+    },
+}
+
+_LOCALIZED_LANGUAGE_LABELS: dict[str, dict[str, str]] = {
+    "en-IN": {"en-IN": "English", "hi-IN": "Hindi", "ta-IN": "Tamil", "te-IN": "Telugu", "kn-IN": "Kannada", "ml-IN": "Malayalam", "mr-IN": "Marathi", "gu-IN": "Gujarati", "bn-IN": "Bengali", "ur-IN": "Urdu"},
+    "hi-IN": {"en-IN": "अंग्रेज़ी", "hi-IN": "हिंदी", "ta-IN": "तमिल", "te-IN": "तेलुगु", "kn-IN": "कन्नड़", "ml-IN": "मलयालम", "mr-IN": "मराठी", "gu-IN": "गुजराती", "bn-IN": "बांग्ला", "ur-IN": "उर्दू"},
+    "kn-IN": {"en-IN": "ಇಂಗ್ಲಿಷ್", "hi-IN": "ಹಿಂದಿ", "ta-IN": "ತಮಿಳು", "te-IN": "ತೆಲುಗು", "kn-IN": "ಕನ್ನಡ", "ml-IN": "ಮಲಯಾಳಂ", "mr-IN": "ಮರಾಠಿ", "gu-IN": "ಗುಜರಾತಿ", "bn-IN": "ಬೆಂಗಾಳಿ", "ur-IN": "ಉರ್ದು"},
+}
+
+
+def _session_language(session_id: str) -> str:
+    return orchestrator.session_language_memory.get(session_id, "en-IN")
+
+
+def _ui_text(session_id: str, key: str, language_code: str | None = None) -> str:
+    lang = language_code or _session_language(session_id)
+    return _UI_STRINGS.get(lang, _UI_STRINGS["en-IN"]).get(key, _UI_STRINGS["en-IN"].get(key, key))
+
+
+def _localize_text(session_id: str, text: str, language_code: str | None = None) -> str:
+    target_language = language_code or _session_language(session_id)
+    if target_language == "en-IN":
+        return text
+    translated = sarvam.translate_response_text(
+        text=text,
+        source_language=None,
+        target_language=target_language,
+        conversation_id=session_id,
+        channel="whatsapp",
+    )
+    return translated.get("text", text)
+
+
+def _is_end_session_command(user_input: str) -> bool:
+    text = (user_input or "").strip().lower()
+    return text in {"0", "end", "end session", "restart", "new chat", "reset"}
+
+
+def _clear_session_state(session_id: str) -> None:
+    _pending_follow_up_options.pop(session_id, None)
+    _pending_language_selection.pop(session_id, None)
+    _pending_initial_message.pop(session_id, None)
+    _pending_feedback.pop(session_id, None)
+
+    orchestrator.session_language_memory.pop(session_id, None)
+    orchestrator.session_history.pop(session_id, None)
+    orchestrator.session_last_results.pop(session_id, None)
+    orchestrator.session_profiles.pop(session_id, None)
+    if session_id in orchestrator.session_welcome_sent:
+        orchestrator.session_welcome_sent.remove(session_id)
+
+
+def _with_end_session_option(session_id: str, text: str) -> str:
+    base = (text or "").strip()
+    marker = _ui_text(session_id, "end_session")
+    if marker in base:
+        return base
+    if not base:
+        return marker
+    return f"{base}\n\n{marker}"
+
+
+def _chunk_message(text: str, limit: int = _TWILIO_MESSAGE_CHAR_LIMIT) -> list[str]:
+    content = (text or "").strip()
+    if not content:
+        return [""]
+    if len(content) <= limit:
+        return [content]
+
+    chunks: list[str] = []
+    current = ""
+    for line in content.splitlines():
+        candidate = f"{current}\n{line}".strip() if current else line
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+            current = line
+        else:
+            # Single long line: hard split.
+            start = 0
+            while start < len(line):
+                part = line[start:start + limit]
+                chunks.append(part)
+                start += limit
+            current = ""
+    if current:
+        chunks.append(current)
+    return chunks or [content[:limit]]
+
+
+def _map_whatsapp_selection(session_id: str, user_input: str) -> str:
+    options = _pending_follow_up_options.get(session_id, [])
+    if not options:
+        return user_input
+
+    text = (user_input or "").strip()
+    if not text:
+        return text
+
+    # Numeric selection: "1", "2", ...
+    if text.isdigit():
+        idx = int(text) - 1
+        if 0 <= idx < len(options):
+            selected = options[idx].get("value", text)
+            _pending_follow_up_options.pop(session_id, None)
+            return selected
+
+    lowered = text.lower()
+    for option in options:
+        value = (option.get("value") or "").strip()
+        label = (option.get("label") or "").strip()
+        if lowered == value.lower() or lowered == label.lower():
+            _pending_follow_up_options.pop(session_id, None)
+            return value or text
+
+    return text
+
+
+def _format_whatsapp_reply(session_id: str, answer: str, follow_up_options: list[dict[str, str]]) -> str:
+    if not follow_up_options:
+        return answer
+
+    lang = _session_language(session_id)
+    lines = [answer.strip(), "", _ui_text(session_id, "reply_with_number", language_code=lang)]
+    for idx, option in enumerate(follow_up_options, start=1):
+        label = option.get("label") or option.get("value") or str(idx)
+        lines.append(f"{idx}. {label}")
+    return "\n".join(lines).strip()
+
+
+def _format_language_menu(session_id: str) -> str:
+    lang = _session_language(session_id)
+    lines = [_ui_text(session_id, "select_language", language_code=lang), "", _ui_text(session_id, "reply_with_number", language_code=lang)]
+    labels = _LOCALIZED_LANGUAGE_LABELS.get(lang, _LOCALIZED_LANGUAGE_LABELS["en-IN"])
+    for idx, item in enumerate(_LANGUAGE_CHOICES, start=1):
+        lines.append(f"{idx}. {labels.get(item['value'], item['label'])}")
+    return "\n".join(lines).strip()
+
+
+def _resolve_language_selection(user_input: str) -> str | None:
+    text = (user_input or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        idx = int(text) - 1
+        if 0 <= idx < len(_LANGUAGE_CHOICES):
+            return _LANGUAGE_CHOICES[idx]["value"]
+        return None
+
+    lowered = text.lower()
+    for item in _LANGUAGE_CHOICES:
+        if lowered == item["value"].lower() or lowered == item["label"].lower():
+            return item["value"]
+    return None
+
+
+def _feedback_prompt(session_id: str, language_code: str) -> str:
+    lines = [
+        _ui_text(session_id, "helpful_prompt", language_code=language_code),
+        _ui_text(session_id, "reply_with_number", language_code=language_code),
+        f"1. {_ui_text(session_id, 'yes', language_code=language_code)}",
+        f"2. {_ui_text(session_id, 'no', language_code=language_code)}",
+    ]
+    return "\n".join(lines)
+
+
+def _feedback_thanks(session_id: str, language_code: str) -> str:
+    return _ui_text(session_id, "feedback_thanks", language_code=language_code)
+
+
+def _feedback_reason_prompt(session_id: str, language_code: str) -> str:
+    lines = [_ui_text(session_id, "feedback_reason_prompt", language_code=language_code)]
+    for idx, item in enumerate(_FEEDBACK_REASON_CHOICES, start=1):
+        lines.append(f"{idx}. {item['label']}")
+    return _localize_text(session_id, "\n".join(lines), language_code=language_code)
+
+
+def _should_offer_feedback(response: dict) -> bool:
+    if response.get("follow_up_options"):
+        return False
+    actions = response.get("actions") or []
+    if "profiling" in actions:
+        return False
+    return bool((response.get("answer") or "").strip())
+
+
+def _resolve_feedback_reason(user_input: str) -> str:
+    text = (user_input or "").strip()
+    if not text:
+        return ""
+    if text.isdigit():
+        idx = int(text) - 1
+        if 0 <= idx < len(_FEEDBACK_REASON_CHOICES):
+            return _FEEDBACK_REASON_CHOICES[idx]["label"]
+    lowered = text.lower()
+    for item in _FEEDBACK_REASON_CHOICES:
+        if lowered in (item["value"].lower(), item["label"].lower()):
+            return item["label"]
+    return text
+
+
+def _maybe_handle_feedback_input(session_id: str, incoming_message: str) -> str | None:
+    ctx = _pending_feedback.get(session_id)
+    if not ctx:
+        return None
+
+    text = (incoming_message or "").strip()
+    language_code = str(ctx.get("language_code") or "en-IN")
+    stage = str(ctx.get("stage") or "helpful")
+
+    yes_inputs = {"1", "yes", "y", "haan", "ha", "helpful", "useful"}
+    no_inputs = {"2", "no", "n", "nah", "not helpful"}
+
+    if stage == "helpful":
+        lowered = text.lower()
+        if lowered in yes_inputs:
+            _pending_feedback.pop(session_id, None)
+            return _feedback_thanks(session_id, language_code)
+        if lowered in no_inputs:
+            ctx["stage"] = "reason"
+            _pending_feedback[session_id] = ctx
+            return _feedback_reason_prompt(session_id, language_code)
+        # Treat non-feedback text as a new user query.
+        _pending_feedback.pop(session_id, None)
+        return None
+
+    # stage == reason
+    reason = _resolve_feedback_reason(text)
+    if not reason:
+        return _feedback_reason_prompt(session_id, language_code)
+
+    question = str(ctx.get("question") or "")
+    original_answer = str(ctx.get("answer") or "")
+    location = ctx.get("location") if isinstance(ctx.get("location"), dict) else {}
+    sources = ctx.get("sources") if isinstance(ctx.get("sources"), list) else []
+    improved = orchestrator.retry(
+        question=question,
+        original_answer=original_answer,
+        reason=reason,
+        sources=sources,
+        location={
+            "state": str(location.get("state") or "Unknown"),
+            "district": str(location.get("district") or "Unknown"),
+        },
+        language_code=language_code,
+    )
+    improved_localized = _localize_text(session_id, improved, language_code=language_code)
+    _pending_feedback.pop(session_id, None)
+    return f"{improved_localized}\n\n{_feedback_thanks(session_id, language_code)}"
+
+
+def _answer_for_whatsapp(session_id: str, incoming_message: str, language_code: str | None = None) -> str:
+    mapped_message = _map_whatsapp_selection(session_id=session_id, user_input=incoming_message)
+    response = orchestrator.answer(
+        message=mapped_message,
+        session_id=session_id,
+        channel="whatsapp",
+        language_code=language_code,
+        location_hint=None,
+    )
+    options = response.get("follow_up_options") or []
+    if options:
+        _pending_follow_up_options[session_id] = options
+    else:
+        _pending_follow_up_options.pop(session_id, None)
+    reply = _format_whatsapp_reply(session_id, response["answer"], options)
+    if _should_offer_feedback(response):
+        session_language = str(response.get("session_language") or response.get("language_code") or "en-IN")
+        _pending_feedback[session_id] = {
+            "stage": "helpful",
+            "question": mapped_message,
+            "answer": str(response.get("answer") or ""),
+            "language_code": session_language,
+            "location": response.get("location") or {},
+            "sources": response.get("sources") or [],
+        }
+        reply = f"{reply}\n\n{_feedback_prompt(session_id, session_language)}"
+    else:
+        _pending_feedback.pop(session_id, None)
+    return reply
+
+
+def _handle_whatsapp_user_input(session_id: str, incoming_message: str) -> str:
+    if _is_end_session_command(incoming_message):
+        language_before_clear = _session_language(session_id)
+        _clear_session_state(session_id)
+        return _localize_text(
+            session_id,
+            "Session ended. You can start a fresh chat anytime by sending a new message.",
+            language_code=language_before_clear,
+        )
+
+    feedback_reply = _maybe_handle_feedback_input(session_id=session_id, incoming_message=incoming_message)
+    if feedback_reply is not None:
+        return feedback_reply
+
+    # First-touch language menu for better guided onboarding.
+    if _pending_language_selection.get(session_id):
+        chosen = _resolve_language_selection(incoming_message)
+        if not chosen:
+            return _format_language_menu(session_id)
+
+        _pending_language_selection.pop(session_id, None)
+        buffered = _pending_initial_message.pop(session_id, "").strip()
+        first_message = buffered or "hi"
+        language_label = _LOCALIZED_LANGUAGE_LABELS.get(chosen, _LOCALIZED_LANGUAGE_LABELS["en-IN"]).get(chosen, chosen)
+        reply = _answer_for_whatsapp(session_id=session_id, incoming_message=first_message, language_code=chosen)
+        prefix = _ui_text(session_id, "language_set", language_code=chosen).format(label=language_label)
+        return f"{prefix}\n\n{reply}"
+
+    if session_id not in orchestrator.session_language_memory:
+        _pending_language_selection[session_id] = True
+        _pending_initial_message[session_id] = incoming_message
+        _pending_follow_up_options.pop(session_id, None)
+        _pending_feedback.pop(session_id, None)
+        return _format_language_menu(session_id)
+
+    return _answer_for_whatsapp(session_id=session_id, incoming_message=incoming_message)
 
 
 @router.post("/webhook")
 def webhook(payload: WhatsAppWebhookRequest):
     """Demo JSON endpoint used by the web UI simulation."""
-    response = orchestrator.answer(
-        message=payload.message,
+    reply_text = _handle_whatsapp_user_input(
         session_id=payload.from_number,
-        channel="whatsapp",
-        language_code=None,
-        location_hint=None,
+        incoming_message=payload.message,
     )
+    reply_text = _with_end_session_option(payload.from_number, reply_text)
     return {
         "to": payload.from_number,
         "channel": "whatsapp-mock",
-        "reply": response["answer"],
+        "reply": reply_text,
         "meta": {
-            "detected_language": response["detected_language"],
-            "location": response["location"],
+            "pending_language_selection": _pending_language_selection.get(payload.from_number, False),
+            "pending_follow_up_options": len(_pending_follow_up_options.get(payload.from_number, [])),
         },
     }
 
@@ -46,6 +464,7 @@ async def twilio_webhook(request: Request):
     message_sid: str = form.get("MessageSid", "")
     media_count_raw: str = form.get("NumMedia", "0")
     media_content_type_0: str = form.get("MediaContentType0", "")
+    media_url_0: str = form.get("MediaUrl0", "")
 
     if not from_number:
         raise HTTPException(status_code=400, detail="Missing From field")
@@ -76,25 +495,44 @@ async def twilio_webhook(request: Request):
     incoming_message = (body or "").strip()
 
     # Twilio WhatsApp voice notes are sent as media with empty Body.
-    if not incoming_message and media_count > 0 and media_content_type_0.startswith("audio/"):
-        reply_text = (
-            "I received your voice note, but voice-note transcription is not enabled yet. "
-            "Please send your message as text for now."
+    if media_count > 0 and media_content_type_0.startswith("audio/"):
+        stt = sarvam.transcribe_audio_url(
+            media_url=media_url_0,
+            mime_type=media_content_type_0 or "audio/ogg",
+            auth_username=settings.twilio_account_sid,
+            auth_password=settings.twilio_auth_token,
+            language_code=None,
         )
+        transcript = (stt.get("transcript") or "").strip()
+        if transcript:
+            reply_text = _handle_whatsapp_user_input(session_id=from_number, incoming_message=transcript)
+        elif incoming_message:
+            reply_text = _handle_whatsapp_user_input(session_id=from_number, incoming_message=incoming_message)
+        else:
+            reply_text = (
+                "I received your voice note but could not transcribe it. "
+                "Please resend audio clearly or send text."
+            )
+            _clear_session_state(from_number)
     elif not incoming_message:
         reply_text = "Please send a text message so I can help you."
+        _clear_session_state(from_number)
     else:
-        response = orchestrator.answer(
-            message=incoming_message,
-            session_id=from_number,
-            channel="whatsapp",
-            language_code=None,
-            location_hint=None,
-        )
-        reply_text = response["answer"]
+        reply_text = _handle_whatsapp_user_input(session_id=from_number, incoming_message=incoming_message)
 
-    twiml = (
-        "<?xml version='1.0' encoding='UTF-8'?>"
-        f"<Response><Message>{escape(reply_text)}</Message></Response>"
-    )
+    reply_text = _with_end_session_option(from_number, reply_text)
+
+    parts = _chunk_message(reply_text)
+    messages_xml = "".join(f"<Message>{escape(part)}</Message>" for part in parts if part is not None)
+    twiml = f"<?xml version='1.0' encoding='UTF-8'?><Response>{messages_xml}</Response>"
     return PlainTextResponse(content=twiml, media_type="application/xml")
+
+
+@router.get("/twilio")
+def twilio_webhook_status():
+    return {
+        "status": "ok",
+        "endpoint": "/whatsapp/twilio",
+        "method": "POST",
+        "message": "This endpoint is active. Twilio should send POST webhooks here.",
+    }

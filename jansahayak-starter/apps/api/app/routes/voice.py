@@ -15,4 +15,9 @@ def tts(payload: VoiceRequest):
 
 @router.post("/stt")
 def stt(payload: SpeechToTextRequest):
-    return service.speech_to_text(payload.transcript_hint, payload.language_code)
+    return service.speech_to_text(
+        transcript_hint=payload.transcript_hint,
+        language_code=payload.language_code,
+        audio_base64=payload.audio_base64,
+        mime_type=payload.mime_type,
+    )
