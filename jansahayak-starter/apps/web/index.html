@@ -54,6 +54,13 @@
         <div>
           <h2>Citizen Assistant Console</h2>
           <p>Auto language detection, inline voice input, WhatsApp simulation, and feedback-driven improvement.</p>
+          <div class="hero-languages" aria-label="Welcome languages">
+            <span class="lang-pill">Welcome</span>
+            <span class="lang-pill">&#x0928;&#x092E;&#x0938;&#x094D;&#x0924;&#x0947;</span>
+            <span class="lang-pill">&#x09B8;&#x09CD;&#x09AC;&#x09BE;&#x0997;&#x09A4;&#x09AE;</span>
+            <span class="lang-pill">&#x0BB5;&#x0BA3;&#x0B95;&#x0BCD;&#x0B95;&#x0BAE;&#x0BCD;</span>
+            <span class="lang-pill">&#x0C38;&#x0C4D;&#x0C35;&#x0C3E;&#x0C17;&#x0C24;&#x0C02;</span>
+          </div>
         </div>
       </section>
 
@@ -64,7 +71,12 @@
           <div class="composer">
             <div class="input-wrap">
               <textarea id="messageInput" placeholder="Type your message or use voice input..." aria-label="Message input"></textarea>
-              <button id="micBtn" class="mic-btn" aria-label="Voice input" title="Voice input">🎤</button>
+              <button id="micBtn" class="mic-btn" aria-label="Voice input" title="Voice input">&#127908;</button>
+            </div>
+            <div class="quick-actions" aria-label="Quick prompts">
+              <button type="button" class="quick-chip secondary" data-prompt="Show relevant schemes for my location">Find Schemes</button>
+              <button type="button" class="quick-chip secondary" data-prompt="Check eligibility for available schemes">Check Eligibility</button>
+              <button type="button" class="quick-chip secondary" data-prompt="Help me file a grievance">Raise Grievance</button>
             </div>
             <div class="composer-actions">
               <button id="sendBtn" class="primary">Send</button>

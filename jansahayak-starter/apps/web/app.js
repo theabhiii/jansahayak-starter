@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'jansahayak_chats_v3';
+﻿const STORAGE_KEY = 'jansahayak_chats_v3';
 
 const state = {
   chats: [],
@@ -22,6 +22,15 @@ function uiLanguage(code) {
   if (!code) return 'en';
   const normalized = String(code).toLowerCase();
   if (normalized.startsWith('hi')) return 'hi';
+  if (normalized.startsWith('bn')) return 'bn';
+  if (normalized.startsWith('ta')) return 'ta';
+  if (normalized.startsWith('te')) return 'te';
+  if (normalized.startsWith('kn')) return 'kn';
+  if (normalized.startsWith('ml')) return 'ml';
+  if (normalized.startsWith('mr')) return 'mr';
+  if (normalized.startsWith('gu')) return 'gu';
+  if (normalized.startsWith('pa')) return 'pa';
+  if (normalized.startsWith('od')) return 'od';
   if (normalized.startsWith('es')) return 'es';
   return 'en';
 }
@@ -54,6 +63,11 @@ function uiText(key, languageCode) {
       hideThinking: 'Hide thinking',
       referencesLabel: 'References',
       openSource: 'Open Source',
+      welcomeTitle: 'Welcome',
+      welcomeLine1: '\u0928\u092E\u0938\u094D\u0924\u0947! JanSahayak \u092E\u0947\u0902 \u0906\u092A\u0915\u093E \u0938\u094D\u0935\u093E\u0917\u0924 \u0939\u0948\u0964',
+      welcomeLine2: '\u09B8\u09CD\u09AC\u09BE\u0997\u09A4\u09AE! \u09B8\u09B0\u0995\u09BE\u09B0\u09BF \u09AA\u09B0\u09BF\u09B7\u09C7\u09AC\u09BE \u099C\u09BE\u09A8\u09A4\u09C7 \u09AA\u09CD\u09B0\u09B6\u09CD\u09A8 \u0995\u09B0\u09C1\u09A8\u0964',
+      welcomeLine3: '\u0BB5\u0BA3\u0B95\u0BCD\u0B95\u0BAE\u0BCD! \u0BA4\u0BBF\u0B9F\u0BCD\u0B9F\u0B99\u0BCD\u0B95\u0BB3\u0BCD \u0BAE\u0BB1\u0BCD\u0BB1\u0BC1\u0BAE\u0BCD \u0BA4\u0B95\u0BC1\u0BA4\u0BBF \u0BAA\u0BB1\u0BCD\u0BB1\u0BBF \u0B95\u0BC7\u0BB3\u0BC1\u0B99\u0BCD\u0B95\u0BB3\u0BCD.',
+      welcomeLine4: '\u0C38\u0C4D\u0C35\u0C3E\u0C17\u0C24\u0C02! \u0C2A\u0C25\u0C15\u0C3E\u0C32\u0C41, \u0C05\u0C30\u0C4D\u0C39\u0C24, \u0C2B\u0C3F\u0C30\u0C4D\u0C2F\u0C3E\u0C26\u0C41\u0C32\u0C2A\u0C48 \u0C05\u0C21\u0C17\u0C02\u0C21\u0C3F.',
       feedbackLabel: 'Was this response helpful?',
       like: 'Helpful',
       dislike: 'Not helpful',
@@ -71,41 +85,68 @@ function uiText(key, languageCode) {
       feedbackPromptTitle: 'Help me improve this answer',
     },
     hi: {
-      speakerAria: 'उत्तर सुनें',
-      speakerTitle: 'उत्तर सुनें',
-      speakerLatestOnly: 'केवल नवीनतम सहायक उत्तर चलाया जा सकता है',
-      speakerUnsupported: 'उत्तर सुनें (इस भाषा के लिए उपलब्ध नहीं)',
-      audioUnsupported: 'मौजूदा उत्तर भाषा के लिए ऑडियो प्लेबैक उपलब्ध नहीं है।',
-      startPrompt: 'योजनाओं, पात्रता, शिकायत या स्थान-आधारित मार्गदर्शन के बारे में पूछना शुरू करें।',
-      assistantLabel: 'सहायक',
-      deleteConfirm: 'क्या आप इस चैट को स्थानीय इतिहास से स्थायी रूप से हटाना चाहते हैं?',
-      apiUnreachable: 'API तक पहुंच नहीं हो पाई।',
-      improveFirst: 'पहले एक संदेश भेजें, फिर Improve का उपयोग करें।',
-      improveFailed: 'सुधार प्रक्रिया पूरी नहीं हो सकी।',
-      askFirstTts: 'पहले कुछ पूछें ताकि मैं TTS के लिए पाठ भेज सकूं।',
-      voiceStatus: 'आवाज़ स्थिति',
-      voiceFailed: 'Voice कॉल विफल रहा।',
-      voiceUnavailable: 'वॉयस इनपुट उपलब्ध नहीं',
-      stopVoice: 'वॉयस इनपुट रोकें',
-      startVoice: 'वॉयस इनपुट',
-      voiceError: 'वॉयस इनपुट त्रुटि',
-      thanks: 'धन्यवाद। आपकी प्रतिक्रिया गुणवत्ता सुधार के लिए दर्ज कर ली गई है।',
+      speakerAria: 'à¤‰à¤¤à¥à¤¤à¤° à¤¸à¥à¤¨à¥‡à¤‚',
+      speakerTitle: 'à¤‰à¤¤à¥à¤¤à¤° à¤¸à¥à¤¨à¥‡à¤‚',
+      speakerLatestOnly: 'à¤•à¥‡à¤µà¤² à¤¨à¤µà¥€à¤¨à¤¤à¤® à¤¸à¤¹à¤¾à¤¯à¤• à¤‰à¤¤à¥à¤¤à¤° à¤šà¤²à¤¾à¤¯à¤¾ à¤œà¤¾ à¤¸à¤•à¤¤à¤¾ à¤¹à¥ˆ',
+      speakerUnsupported: 'à¤‰à¤¤à¥à¤¤à¤° à¤¸à¥à¤¨à¥‡à¤‚ (à¤‡à¤¸ à¤­à¤¾à¤·à¤¾ à¤•à¥‡ à¤²à¤¿à¤ à¤‰à¤ªà¤²à¤¬à¥à¤§ à¤¨à¤¹à¥€à¤‚)',
+      audioUnsupported: 'à¤®à¥Œà¤œà¥‚à¤¦à¤¾ à¤‰à¤¤à¥à¤¤à¤° à¤­à¤¾à¤·à¤¾ à¤•à¥‡ à¤²à¤¿à¤ à¤‘à¤¡à¤¿à¤¯à¥‹ à¤ªà¥à¤²à¥‡à¤¬à¥ˆà¤• à¤‰à¤ªà¤²à¤¬à¥à¤§ à¤¨à¤¹à¥€à¤‚ à¤¹à¥ˆà¥¤',
+      startPrompt: 'à¤¯à¥‹à¤œà¤¨à¤¾à¤“à¤‚, à¤ªà¤¾à¤¤à¥à¤°à¤¤à¤¾, à¤¶à¤¿à¤•à¤¾à¤¯à¤¤ à¤¯à¤¾ à¤¸à¥à¤¥à¤¾à¤¨-à¤†à¤§à¤¾à¤°à¤¿à¤¤ à¤®à¤¾à¤°à¥à¤—à¤¦à¤°à¥à¤¶à¤¨ à¤•à¥‡ à¤¬à¤¾à¤°à¥‡ à¤®à¥‡à¤‚ à¤ªà¥‚à¤›à¤¨à¤¾ à¤¶à¥à¤°à¥‚ à¤•à¤°à¥‡à¤‚à¥¤',
+      assistantLabel: '\u0938\u0939\u093E\u092F\u0915',
+      deleteConfirm: 'à¤•à¥à¤¯à¤¾ à¤†à¤ª à¤‡à¤¸ à¤šà¥ˆà¤Ÿ à¤•à¥‹ à¤¸à¥à¤¥à¤¾à¤¨à¥€à¤¯ à¤‡à¤¤à¤¿à¤¹à¤¾à¤¸ à¤¸à¥‡ à¤¸à¥à¤¥à¤¾à¤¯à¥€ à¤°à¥‚à¤ª à¤¸à¥‡ à¤¹à¤Ÿà¤¾à¤¨à¤¾ à¤šà¤¾à¤¹à¤¤à¥‡ à¤¹à¥ˆà¤‚?',
+      apiUnreachable: 'API à¤¤à¤• à¤ªà¤¹à¥à¤‚à¤š à¤¨à¤¹à¥€à¤‚ à¤¹à¥‹ à¤ªà¤¾à¤ˆà¥¤',
+      improveFirst: 'à¤ªà¤¹à¤²à¥‡ à¤à¤• à¤¸à¤‚à¤¦à¥‡à¤¶ à¤­à¥‡à¤œà¥‡à¤‚, à¤«à¤¿à¤° Improve à¤•à¤¾ à¤‰à¤ªà¤¯à¥‹à¤— à¤•à¤°à¥‡à¤‚à¥¤',
+      improveFailed: 'à¤¸à¥à¤§à¤¾à¤° à¤ªà¥à¤°à¤•à¥à¤°à¤¿à¤¯à¤¾ à¤ªà¥‚à¤°à¥€ à¤¨à¤¹à¥€à¤‚ à¤¹à¥‹ à¤¸à¤•à¥€à¥¤',
+      askFirstTts: 'à¤ªà¤¹à¤²à¥‡ à¤•à¥à¤› à¤ªà¥‚à¤›à¥‡à¤‚ à¤¤à¤¾à¤•à¤¿ à¤®à¥ˆà¤‚ TTS à¤•à¥‡ à¤²à¤¿à¤ à¤ªà¤¾à¤  à¤­à¥‡à¤œ à¤¸à¤•à¥‚à¤‚à¥¤',
+      voiceStatus: 'à¤†à¤µà¤¾à¤œà¤¼ à¤¸à¥à¤¥à¤¿à¤¤à¤¿',
+      voiceFailed: 'Voice à¤•à¥‰à¤² à¤µà¤¿à¤«à¤² à¤°à¤¹à¤¾à¥¤',
+      voiceUnavailable: 'à¤µà¥‰à¤¯à¤¸ à¤‡à¤¨à¤ªà¥à¤Ÿ à¤‰à¤ªà¤²à¤¬à¥à¤§ à¤¨à¤¹à¥€à¤‚',
+      stopVoice: 'à¤µà¥‰à¤¯à¤¸ à¤‡à¤¨à¤ªà¥à¤Ÿ à¤°à¥‹à¤•à¥‡à¤‚',
+      startVoice: 'à¤µà¥‰à¤¯à¤¸ à¤‡à¤¨à¤ªà¥à¤Ÿ',
+      voiceError: 'à¤µà¥‰à¤¯à¤¸ à¤‡à¤¨à¤ªà¥à¤Ÿ à¤¤à¥à¤°à¥à¤Ÿà¤¿',
+      thanks: 'à¤§à¤¨à¥à¤¯à¤µà¤¾à¤¦à¥¤ à¤†à¤ªà¤•à¥€ à¤ªà¥à¤°à¤¤à¤¿à¤•à¥à¤°à¤¿à¤¯à¤¾ à¤—à¥à¤£à¤µà¤¤à¥à¤¤à¤¾ à¤¸à¥à¤§à¤¾à¤° à¤•à¥‡ à¤²à¤¿à¤ à¤¦à¤°à¥à¤œ à¤•à¤° à¤²à¥€ à¤—à¤ˆ à¤¹à¥ˆà¥¤',
+    },
+    bn: {
+      startPrompt: '\u09B8\u09CD\u0995\u09BF\u09AE, \u09AF\u09CB\u0997\u09CD\u09AF\u09A4\u09BE, \u0985\u09AD\u09BF\u09AF\u09CB\u0997 \u09AC\u09BE \u0985\u09AC\u09B8\u09CD\u09A5\u09BE\u09A8\u09AD\u09BF\u09A4\u09CD\u09A4\u09BF\u0995 \u09A8\u09BF\u09B0\u09CD\u09A6\u09C7\u09B6\u09A8\u09BE \u09B8\u09AE\u09CD\u09AA\u09B0\u09CD\u0995\u09C7 \u09AA\u09CD\u09B0\u09B6\u09CD\u09A8 \u0995\u09B0\u09C7 \u09B6\u09C1\u09B0\u09C1 \u0995\u09B0\u09C1\u09A8\u0964',
+    },
+    ta: {
+      startPrompt: '\u0BA4\u0BBF\u0B9F\u0BCD\u0B9F\u0B99\u0BCD\u0B95\u0BB3\u0BCD, \u0BA4\u0B95\u0BC1\u0BA4\u0BBF, \u0BAA\u0BC1\u0B95\u0BBE\u0BB0\u0BCD\u0B95\u0BB3\u0BCD \u0B85\u0BB2\u0BCD\u0BB2\u0BA4\u0BC1 \u0B87\u0B9F\u0BB5\u0BBE\u0BB0\u0BBF\u0BAF\u0BBE\u0BA9 \u0BB5\u0BB4\u0BBF\u0B95\u0BBE\u0B9F\u0BCD\u0B9F\u0BB2\u0BCD \u0BAA\u0BB1\u0BCD\u0BB1\u0BBF \u0B95\u0BC7\u0B9F\u0BCD\u0B9F\u0BC1 \u0BA4\u0BCA\u0B9F\u0B99\u0BCD\u0B95\u0BC1\u0B99\u0BCD\u0B95\u0BB3\u0BCD.',
+    },
+    te: {
+      startPrompt: '\u0C2A\u0C25\u0C15\u0C3E\u0C32\u0C41, \u0C05\u0C30\u0C4D\u0C39\u0C24, \u0C2B\u0C3F\u0C30\u0C4D\u0C2F\u0C3E\u0C26\u0C41\u0C32\u0C41 \u0C32\u0C47\u0C26\u0C3E \u0C38\u0C4D\u0C25\u0C3E\u0C28\u0C3F\u0C15 \u0C2E\u0C3E\u0C30\u0C4D\u0C17\u0C26\u0C30\u0C4D\u0C36\u0C15\u0C24\u0C4D\u0C35\u0C02 \u0C17\u0C41\u0C30\u0C3F\u0C02\u0C1A\u0C3F \u0C05\u0C21\u0C17\u0C3F \u0C2A\u0C4D\u0C30\u0C3E\u0C30\u0C02\u0C2D\u0C3F\u0C02\u0C1A\u0C02\u0C21\u0C3F.',
+    },
+    kn: {
+      startPrompt: '\u0CAF\u0CCB\u0C9C\u0CA8\u0CC6\u0C97\u0CB3\u0CC1, \u0C85\u0CB0\u0CCD\u0CB9\u0CA4\u0CC6, \u0CA6\u0CC2\u0CB0\u0CC1\u0C97\u0CB3\u0CC1 \u0C85\u0CA5\u0CB5\u0CBE \u0CB8\u0CCD\u0CA5\u0CB3\u0CBE\u0CA7\u0CBE\u0CB0\u0CBF\u0CA4 \u0CAE\u0CBE\u0CB0\u0CCD\u0C97\u0CA6\u0CB0\u0CCD\u0CB6\u0CA8\u0C95\u0CCD\u0C95\u0CBE\u0C97\u0CBF \u0C95\u0CC7\u0CB3\u0CC1\u0CB5\u0CC1\u0CA6\u0CB0\u0CBF\u0C82\u0CA6 \u0CAA\u0CCD\u0CB0\u0CBE\u0CB0\u0C82\u0CAD\u0CBF\u0CB8\u0CBF.',
+    },
+    ml: {
+      startPrompt: '\u0D2A\u0D26\u0D4D\u0D27\u0D24\u0D3F\u0D15\u0D7E, \u0D05\u0D30\u0D4D\u0D39\u0D24, \u0D2A\u0D30\u0D3E\u0D24\u0D3F\u0D15\u0D7E \u0D05\u0D25\u0D35\u0D3E \u0D38\u0D4D\u0D25\u0D32\u0D3E\u0D27\u0D3F\u0D37\u0D4D\u0D20\u0D3F\u0D24 \u0D2E\u0D3E\u0D7C\u0D17\u0D4D\u0D17\u0D28\u0D3F\u0D7C\u0D26\u0D4D\u0D26\u0D47\u0D36\u0D02 \u0D15\u0D41\u0D31\u0D3F\u0D1A\u0D4D\u0D1A\u0D4D \u0D1A\u0D4B\u0D26\u0D3F\u0D1A\u0D4D\u0D1A\u0D4D \u0D24\u0D41\u0D1F\u0D19\u0D4D\u0D19\u0D41\u0D15.',
+    },
+    mr: {
+      startPrompt: '\u092F\u094B\u091C\u0928\u093E, \u092A\u093E\u0924\u094D\u0930\u0924\u093E, \u0924\u0915\u094D\u0930\u093E\u0930\u0940 \u0915\u093F\u0902\u0935\u093E \u0938\u094D\u0925\u093E\u0928-\u0935\u093F\u0936\u093F\u0937\u094D\u091F \u092E\u093E\u0930\u094D\u0917\u0926\u0930\u094D\u0936\u0928\u093E\u092C\u0926\u094D\u0926\u0932 \u0935\u093F\u091A\u093E\u0930\u0942\u0928 \u0938\u0941\u0930\u0941\u0935\u093E\u0924 \u0915\u0930\u093E.',
+    },
+    gu: {
+      startPrompt: '\u0AAF\u0ACB\u0A9C\u0AA8\u0ABE\u0A93, \u0AAA\u0ABE\u0AA4\u0ACD\u0AB0\u0AA4\u0ABE, \u0AAB\u0AB0\u0ABF\u0AAF\u0ABE\u0AA6\u0ACB \u0A85\u0AA5\u0AB5\u0ABE \u0AB8\u0ACD\u0AA5\u0ABE\u0AA8-\u0A86\u0AA7\u0ABE\u0AB0\u0ABF\u0AA4 \u0AAE\u0ABE\u0AB0\u0ACD\u0A97\u0AA6\u0AB0\u0ACD\u0AB6\u0AA8 \u0AB5\u0ABF\u0AB6\u0AC7 \u0AAA\u0AC2\u0A9B\u0AC0\u0AA8\u0AC7 \u0AB6\u0AB0\u0AC1\u0A86\u0AA4 \u0A95\u0AB0\u0ACB.',
+    },
+    pa: {
+      startPrompt: '\u0A2F\u0A4B\u0A1C\u0A28\u0A3E\u0A35\u0A3E\u0A02, \u0A2F\u0A4B\u0A17\u0A24\u0A3E, \u0A38\u0A3C\u0A3F\u0A15\u0A3E\u0A07\u0A24\u0A3E\u0A02 \u0A1C\u0A3E\u0A02 \u0A38\u0A25\u0A3E\u0A28-\u0A05\u0A27\u0A3E\u0A30\u0A3F\u0A24 \u0A2E\u0A3E\u0A30\u0A17\u0A26\u0A30\u0A38\u0A3C\u0A28 \u0A2C\u0A3E\u0A30\u0A47 \u0A2A\u0A41\u0A1B \u0A15\u0A47 \u0A38\u0A3C\u0A41\u0A30\u0A42 \u0A15\u0A30\u0A4B.',
+    },
+    od: {
+      startPrompt: '\u0B2F\u0B4B\u0B1C\u0B28\u0B3E, \u0B2F\u0B4B\u0B17\u0B4D\u0B5F\u0B24\u0B3E, \u0B05\u0B2D\u0B3F\u0B2F\u0B4B\u0B17 \u0B15\u0B3F\u0B2E\u0B4D\u0B2C\u0B3E \u0B38\u0B4D\u0B25\u0B3E\u0B28-\u0B2D\u0B3F\u0B24\u0B4D\u0B24\u0B3F\u0B15 \u0B2E\u0B3E\u0B30\u0B4D\u0B17\u0B26\u0B30\u0B4D\u0B36\u0B28 \u0B2C\u0B3F\u0B37\u0B5F\u0B30\u0B47 \u0B2A\u0B1A\u0B3E\u0B30\u0B3F \u0B06\u0B30\u0B2E\u0B4D\u0B2D \u0B15\u0B30\u0B28\u0B4D\u0B24\u0B41\u0964',
     },
     es: {
       speakerAria: 'Leer respuesta en voz alta',
       speakerTitle: 'Leer respuesta en voz alta',
-      speakerLatestOnly: 'Solo se puede reproducir la respuesta más reciente del asistente',
+      speakerLatestOnly: 'Solo se puede reproducir la respuesta mÃ¡s reciente del asistente',
       speakerUnsupported: 'Leer respuesta en voz alta (no compatible para este idioma)',
-      audioUnsupported: 'La reproducción de audio no es compatible con el idioma de la respuesta actual.',
-      startPrompt: 'Empieza preguntando por esquemas, elegibilidad, quejas o guía por ubicación.',
+      audioUnsupported: 'La reproducciÃ³n de audio no es compatible con el idioma de la respuesta actual.',
+      startPrompt: 'Empieza preguntando por esquemas, elegibilidad, quejas o guÃ­a por ubicaciÃ³n.',
       assistantLabel: 'Asistente',
-      deleteConfirm: '¿Eliminar este chat permanentemente del historial local?',
+      deleteConfirm: 'Â¿Eliminar este chat permanentemente del historial local?',
       apiUnreachable: 'No se pudo conectar con la API.',
-      improveFirst: 'Primero envía un mensaje y luego usa Improve.',
+      improveFirst: 'Primero envÃ­a un mensaje y luego usa Improve.',
       improveFailed: 'No se pudo completar la mejora.',
       askFirstTts: 'Primero pregunta algo para enviar texto a TTS.',
       voiceStatus: 'Estado de voz',
-      voiceFailed: 'La llamada de voz falló.',
+      voiceFailed: 'La llamada de voz fallÃ³.',
       voiceUnavailable: 'Entrada de voz no disponible',
       stopVoice: 'Detener entrada de voz',
       startVoice: 'Entrada de voz',
@@ -297,6 +338,33 @@ function buildReferencesNode(sources, languageCode) {
 function normalizeLangForSpeech(code) {
   if (!code) return 'en-IN';
   return code;
+}
+
+function detectSpeechLanguageCode(text, fallback = 'en-IN') {
+  const value = String(text || '');
+  if (!value.trim()) return fallback;
+
+  const has = (re) => re.test(value);
+  if (has(/[\u0B80-\u0BFF]/)) return 'ta-IN';
+  if (has(/[\u0C00-\u0C7F]/)) return 'te-IN';
+  if (has(/[\u0C80-\u0CFF]/)) return 'kn-IN';
+  if (has(/[\u0D00-\u0D7F]/)) return 'ml-IN';
+  if (has(/[\u0980-\u09FF]/)) return 'bn-IN';
+  if (has(/[\u0A80-\u0AFF]/)) return 'gu-IN';
+  if (has(/[\u0B00-\u0B7F]/)) return 'od-IN';
+  if (has(/[\u0A00-\u0A7F]/)) return 'pa-IN';
+  if (has(/[\u0900-\u097F]/)) return 'hi-IN';
+  if (has(/[\u0600-\u06FF]/)) return 'ur-IN';
+  if (has(/[áéíóúñüÁÉÍÓÚÑÜ]/)) return 'es-ES';
+  return fallback;
+}
+
+function getPreferredRecognitionLanguage() {
+  const chat = getActiveChat();
+  const chatLang = normalizeLangForSpeech(chat?.lastAnswerLanguage);
+  if (chatLang) return chatLang;
+  const browserLang = normalizeLangForSpeech(navigator.language || '');
+  return browserLang || 'en-IN';
 }
 
 function hasVoiceForLanguage(languageCode) {
@@ -520,7 +588,7 @@ function buildFeedbackRow(chat, message) {
   const likeBtn = document.createElement('button');
   likeBtn.type = 'button';
   likeBtn.className = 'feedback-btn secondary';
-  likeBtn.textContent = `👍 ${uiText('like', languageCode)}`;
+  likeBtn.textContent = `ðŸ‘ ${uiText('like', languageCode)}`;
   likeBtn.setAttribute('aria-label', uiText('like', languageCode));
   likeBtn.addEventListener('click', async () => {
     await submitMessageFeedback(chat, message, 'positive');
@@ -530,7 +598,7 @@ function buildFeedbackRow(chat, message) {
   const dislikeBtn = document.createElement('button');
   dislikeBtn.type = 'button';
   dislikeBtn.className = 'feedback-btn danger';
-  dislikeBtn.textContent = `👎 ${uiText('dislike', languageCode)}`;
+  dislikeBtn.textContent = `ðŸ‘Ž ${uiText('dislike', languageCode)}`;
   dislikeBtn.setAttribute('aria-label', uiText('dislike', languageCode));
   dislikeBtn.addEventListener('click', () => {
     setMessageFeedbackState(chat, message.ts, { feedbackFormOpen: true });
@@ -562,6 +630,26 @@ function buildFollowUpOptionsNode(message) {
   return wrap;
 }
 
+function buildWelcomeCard(languageCode) {
+  const card = document.createElement('div');
+  card.className = 'welcome-card';
+
+  const title = document.createElement('div');
+  title.className = 'welcome-title';
+  title.textContent = uiText('welcomeTitle', languageCode || 'en-IN');
+  card.appendChild(title);
+
+  const lines = document.createElement('div');
+  lines.className = 'welcome-lines';
+  ['welcomeLine1', 'welcomeLine2', 'welcomeLine3', 'welcomeLine4'].forEach((k) => {
+    const row = document.createElement('div');
+    row.textContent = uiText(k, languageCode || 'en-IN');
+    lines.appendChild(row);
+  });
+  card.appendChild(lines);
+  return card;
+}
+
 function renderMessages() {
   const messages = document.getElementById('messages');
   const debug = document.getElementById('debugMeta');
@@ -576,6 +664,7 @@ function renderMessages() {
   const latestBotMessage = getMostRecentAssistantMessage(chat);
 
   if (!chat.messages.length) {
+    messages.appendChild(buildWelcomeCard(chat.lastAnswerLanguage || 'en-IN'));
     const info = document.createElement('div');
     info.className = 'message bot';
     info.textContent = uiText('startPrompt', chat.lastAnswerLanguage || 'en-IN');
@@ -848,11 +937,12 @@ function setupVoiceSupport() {
   }
 
   state.recognition = new SpeechRecognition();
-  state.recognition.continuous = false;
+  state.recognition.continuous = true;
   state.recognition.interimResults = true;
+  state.recognition.maxAlternatives = 1;
 
   state.recognition.onstart = () => {
-    const lang = getActiveChat()?.lastAnswerLanguage || 'en-IN';
+    const lang = getActiveChat()?.lastAnswerLanguage || getPreferredRecognitionLanguage();
     state.isRecording = true;
     micBtn.classList.add('recording');
     micBtn.setAttribute('aria-label', uiText('stopVoice', lang));
@@ -873,26 +963,27 @@ function setupVoiceSupport() {
   };
 
   state.recognition.onresult = async (event) => {
+    let finalCombined = '';
     let interim = '';
-    let finalTranscript = '';
 
     for (let i = event.resultIndex; i < event.results.length; i += 1) {
       const t = event.results[i][0].transcript || '';
       if (event.results[i].isFinal) {
-        finalTranscript += t;
+        finalCombined += `${t} `;
       } else {
-        interim += t;
+        interim += `${t} `;
       }
     }
 
     const input = document.getElementById('messageInput');
-    const composed = (finalTranscript || interim).trim();
+    const composed = `${finalCombined}${interim}`.trim();
     if (composed) input.value = composed;
 
-    if (!finalTranscript.trim()) return;
+    const finalTranscript = finalCombined.trim();
+    if (!finalTranscript) return;
 
     const chat = getActiveChat();
-    const inferredLanguage = chat?.lastAnswerLanguage || 'en-IN';
+    const inferredLanguage = detectSpeechLanguageCode(finalTranscript, chat?.lastAnswerLanguage || getPreferredRecognitionLanguage());
     const apiBase = document.getElementById('apiBase').value.trim();
 
     try {
@@ -905,7 +996,8 @@ function setupVoiceSupport() {
       // best-effort backend hook
     }
 
-    await sendMessage(finalTranscript.trim());
+    state.recognition.stop();
+    await sendMessage(finalTranscript, { forceLanguageCode: inferredLanguage });
   };
 
   micBtn.addEventListener('click', () => {
@@ -916,8 +1008,8 @@ function setupVoiceSupport() {
     }
 
     const chat = getActiveChat();
-    const lang = chat?.lastAnswerLanguage || 'en-IN';
-    state.recognition.lang = normalizeLangForSpeech(lang);
+    const lang = normalizeLangForSpeech(chat?.lastAnswerLanguage || getPreferredRecognitionLanguage());
+    state.recognition.lang = lang;
     state.recognition.start();
   });
 }
@@ -936,6 +1028,13 @@ function wireEvents() {
   document.getElementById('ttsBtn').addEventListener('click', generateVoiceStub);
   document.getElementById('newChatBtn').addEventListener('click', beginNewChat);
   document.getElementById('deleteChatBtn').addEventListener('click', deleteActiveChat);
+  document.querySelectorAll('.quick-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const prompt = btn.getAttribute('data-prompt') || '';
+      if (!prompt) return;
+      sendMessage(prompt);
+    });
+  });
   document.getElementById('messageInput').addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
@@ -954,3 +1053,4 @@ function init() {
 }
 
 init();
+
