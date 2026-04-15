@@ -54,6 +54,21 @@ function uiText(key, languageCode) {
       hideThinking: 'Hide thinking',
       referencesLabel: 'References',
       openSource: 'Open Source',
+      feedbackLabel: 'Was this response helpful?',
+      like: 'Helpful',
+      dislike: 'Not helpful',
+      feedbackSaved: 'Thanks, feedback saved.',
+      improveReady: 'Improved answer:',
+      improveFailedInline: 'Could not run improve flow.',
+      feedbackMissingContext: 'What was missing or incorrect?',
+      feedbackStyle: 'Preferred response style',
+      feedbackContext: 'Any context to include (location, category, beneficiary)?',
+      feedbackStyleShort: 'Short summary',
+      feedbackStyleStep: 'Step-by-step',
+      feedbackStyleDetailed: 'Detailed explanation',
+      submitFeedback: 'Submit',
+      cancel: 'Cancel',
+      feedbackPromptTitle: 'Help me improve this answer',
     },
     hi: {
       speakerAria: 'उत्तर सुनें',
@@ -362,6 +377,191 @@ function createSpeakerButton(chat, message, isMostRecentBot) {
   return btn;
 }
 
+function buildFeedbackReason(details) {
+  const missing = (details.missing || '').trim();
+  const style = (details.style || '').trim();
+  const extra = (details.extra || '').trim();
+  return [
+    `Missing/Incorrect: ${missing || 'N/A'}`,
+    `Preferred style: ${style || 'N/A'}`,
+    `Additional context: ${extra || 'N/A'}`,
+  ].join('\n');
+}
+
+function setMessageFeedbackState(chat, messageTs, patch) {
+  const target = chat.messages.find((m) => m.ts === messageTs);
+  if (!target) return;
+  Object.assign(target, patch);
+  saveChats();
+  renderAll();
+}
+
+async function submitMessageFeedback(chat, message, feedback, details = null) {
+  const apiBase = document.getElementById('apiBase').value.trim();
+  const languageCode = message.languageCode || chat.lastAnswerLanguage || 'en-IN';
+
+  if (!message.feedbackToken || !message.originalQuestion) {
+    appendMessage(uiText('improveFailedInline', languageCode), 'bot', { languageCode });
+    return;
+  }
+
+  try {
+    setMessageFeedbackState(chat, message.ts, { feedbackSubmitted: true, feedbackKind: feedback, feedbackFormOpen: false });
+
+    const response = await fetch(`${apiBase}/chat/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: chat.id,
+        feedback_token: message.feedbackToken,
+        original_question: message.originalQuestion,
+        original_answer: message.text,
+        feedback,
+        reason: details ? buildFeedbackReason(details) : null,
+        language_code: languageCode,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Feedback failed with ${response.status}`);
+    }
+
+    if (feedback === 'negative') {
+      const data = await response.json();
+      if (data?.improved_answer) {
+        appendMessage(`${uiText('improveReady', languageCode)}\n${data.improved_answer}`, 'bot', { languageCode });
+      }
+    }
+  } catch (err) {
+    setMessageFeedbackState(chat, message.ts, { feedbackSubmitted: false, feedbackKind: null });
+    appendMessage(`${uiText('improveFailedInline', languageCode)} ${err.message}`, 'bot', { languageCode });
+  }
+}
+
+function buildFeedbackForm(chat, message) {
+  const languageCode = message.languageCode || chat.lastAnswerLanguage || 'en-IN';
+  const form = document.createElement('div');
+  form.className = 'feedback-form';
+
+  const title = document.createElement('h4');
+  title.textContent = uiText('feedbackPromptTitle', languageCode);
+  form.appendChild(title);
+
+  const missing = document.createElement('textarea');
+  missing.placeholder = uiText('feedbackMissingContext', languageCode);
+  missing.setAttribute('aria-label', uiText('feedbackMissingContext', languageCode));
+  form.appendChild(missing);
+
+  const style = document.createElement('select');
+  style.setAttribute('aria-label', uiText('feedbackStyle', languageCode));
+  [uiText('feedbackStyleShort', languageCode), uiText('feedbackStyleStep', languageCode), uiText('feedbackStyleDetailed', languageCode)]
+    .forEach((label) => {
+      const option = document.createElement('option');
+      option.value = label;
+      option.textContent = label;
+      style.appendChild(option);
+    });
+  form.appendChild(style);
+
+  const extra = document.createElement('textarea');
+  extra.placeholder = uiText('feedbackContext', languageCode);
+  extra.setAttribute('aria-label', uiText('feedbackContext', languageCode));
+  form.appendChild(extra);
+
+  const actions = document.createElement('div');
+  actions.className = 'feedback-actions';
+
+  const submit = document.createElement('button');
+  submit.type = 'button';
+  submit.className = 'primary';
+  submit.textContent = uiText('submitFeedback', languageCode);
+  submit.addEventListener('click', async () => {
+    await submitMessageFeedback(chat, message, 'negative', {
+      missing: missing.value,
+      style: style.value,
+      extra: extra.value,
+    });
+  });
+  actions.appendChild(submit);
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'secondary';
+  cancel.textContent = uiText('cancel', languageCode);
+  cancel.addEventListener('click', () => {
+    setMessageFeedbackState(chat, message.ts, { feedbackFormOpen: false });
+  });
+  actions.appendChild(cancel);
+
+  form.appendChild(actions);
+  return form;
+}
+
+function buildFeedbackRow(chat, message) {
+  if (message.type !== 'bot') return null;
+  if (Array.isArray(message.followUpOptions) && message.followUpOptions.length) return null;
+  const languageCode = message.languageCode || chat.lastAnswerLanguage || 'en-IN';
+  const row = document.createElement('div');
+  row.className = 'feedback-row';
+
+  if (message.feedbackSubmitted) {
+    const done = document.createElement('span');
+    done.className = 'feedback-status';
+    done.textContent = uiText('feedbackSaved', languageCode);
+    row.appendChild(done);
+    return row;
+  }
+
+  const label = document.createElement('span');
+  label.className = 'feedback-status';
+  label.textContent = uiText('feedbackLabel', languageCode);
+  row.appendChild(label);
+
+  const likeBtn = document.createElement('button');
+  likeBtn.type = 'button';
+  likeBtn.className = 'feedback-btn secondary';
+  likeBtn.textContent = `👍 ${uiText('like', languageCode)}`;
+  likeBtn.setAttribute('aria-label', uiText('like', languageCode));
+  likeBtn.addEventListener('click', async () => {
+    await submitMessageFeedback(chat, message, 'positive');
+  });
+  row.appendChild(likeBtn);
+
+  const dislikeBtn = document.createElement('button');
+  dislikeBtn.type = 'button';
+  dislikeBtn.className = 'feedback-btn danger';
+  dislikeBtn.textContent = `👎 ${uiText('dislike', languageCode)}`;
+  dislikeBtn.setAttribute('aria-label', uiText('dislike', languageCode));
+  dislikeBtn.addEventListener('click', () => {
+    setMessageFeedbackState(chat, message.ts, { feedbackFormOpen: true });
+  });
+  row.appendChild(dislikeBtn);
+
+  return row;
+}
+
+function buildFollowUpOptionsNode(message) {
+  const options = Array.isArray(message.followUpOptions) ? message.followUpOptions : [];
+  if (!options.length) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'followup-options';
+
+  options.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'followup-option secondary';
+    const label = opt.label || opt.value || '';
+    const value = opt.value || label;
+    btn.textContent = label;
+    btn.setAttribute('aria-label', label);
+    btn.addEventListener('click', async () => {
+      await sendMessage(value, { forceLanguageCode: message.languageCode || getActiveChat()?.lastAnswerLanguage || null });
+    });
+    wrap.appendChild(btn);
+  });
+  return wrap;
+}
+
 function renderMessages() {
   const messages = document.getElementById('messages');
   const debug = document.getElementById('debugMeta');
@@ -447,6 +647,17 @@ function renderMessages() {
         if (refsNode) {
           body.appendChild(refsNode);
         }
+        const followupNode = buildFollowUpOptionsNode(msg);
+        if (followupNode) {
+          body.appendChild(followupNode);
+        }
+        const feedbackRow = buildFeedbackRow(chat, msg);
+        if (feedbackRow) {
+          body.appendChild(feedbackRow);
+        }
+        if (msg.feedbackFormOpen) {
+          body.appendChild(buildFeedbackForm(chat, msg));
+        }
       } else {
         body.textContent = msg.text;
       }
@@ -473,6 +684,12 @@ function appendMessage(text, type = 'bot', options = {}) {
     ts: nowIso(),
     languageCode: options.languageCode || null,
     sources: normalizeSources(options.sources),
+    feedbackToken: options.feedbackToken || null,
+    originalQuestion: options.originalQuestion || null,
+    feedbackSubmitted: !!options.feedbackSubmitted,
+    feedbackKind: options.feedbackKind || null,
+    feedbackFormOpen: false,
+    followUpOptions: Array.isArray(options.followUpOptions) ? options.followUpOptions : [],
   });
   chat.updatedAt = nowIso();
   saveChats();
@@ -515,7 +732,7 @@ function deleteActiveChat() {
   renderAll();
 }
 
-async function sendMessage(sourceText = null) {
+async function sendMessage(sourceText = null, options = {}) {
   const chat = getActiveChat();
   if (!chat) return;
 
@@ -539,7 +756,7 @@ async function sendMessage(sourceText = null) {
     message,
     channel,
     session_id: chat.id,
-    language_code: null,
+    language_code: options.forceLanguageCode || null,
     location_hint: locationHint,
   };
 
@@ -565,7 +782,13 @@ async function sendMessage(sourceText = null) {
       ? data?.meta?.detected_language || 'en-IN'
       : data.language_code || data.detected_language || 'en-IN';
 
-    appendMessage(answer, 'bot', { languageCode: responseLanguage, sources: data.sources || [] });
+    appendMessage(answer, 'bot', {
+      languageCode: responseLanguage,
+      sources: data.sources || [],
+      feedbackToken: data.feedback_token || null,
+      originalQuestion: message,
+      followUpOptions: data.follow_up_options || [],
+    });
     chat.lastAnswer = answer;
     chat.lastAnswerLanguage = responseLanguage;
     chat.lastFeedbackToken = data.feedback_token || 'whatsapp-mock-token';
@@ -575,41 +798,6 @@ async function sendMessage(sourceText = null) {
     renderAll();
   } catch (err) {
     appendMessage(`${uiText('apiUnreachable', chat.lastAnswerLanguage || 'en-IN')} ${err.message}`, 'bot', { languageCode: chat.lastAnswerLanguage || 'en-IN' });
-  }
-}
-
-async function retryAnswer() {
-  const chat = getActiveChat();
-  if (!chat || !chat.lastQuestion || !chat.lastAnswer) {
-    appendMessage(uiText('improveFirst', chat?.lastAnswerLanguage || 'en-IN'), 'bot', { languageCode: chat?.lastAnswerLanguage || 'en-IN' });
-    return;
-  }
-
-  const apiBase = document.getElementById('apiBase').value.trim();
-
-  try {
-    const response = await fetch(`${apiBase}/chat/feedback`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: chat.id,
-        feedback_token: chat.lastFeedbackToken,
-        original_question: chat.lastQuestion,
-        original_answer: chat.lastAnswer,
-        feedback: 'negative',
-        reason: 'Need a simpler and more location-specific answer',
-        language_code: chat.lastAnswerLanguage || 'en-IN',
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Feedback failed with ${response.status}`);
-    }
-
-    const data = await response.json();
-    appendMessage(data.improved_answer, 'bot', { languageCode: chat.lastAnswerLanguage || 'en-IN' });
-  } catch (err) {
-    appendMessage(`${uiText('improveFailed', chat.lastAnswerLanguage || 'en-IN')} ${err.message}`, 'bot', { languageCode: chat.lastAnswerLanguage || 'en-IN' });
   }
 }
 
@@ -736,12 +924,7 @@ function setupVoiceSupport() {
 
 function wireEvents() {
   document.getElementById('sendBtn').addEventListener('click', () => sendMessage());
-  document.getElementById('retryBtn').addEventListener('click', retryAnswer);
   document.getElementById('ttsBtn').addEventListener('click', generateVoiceStub);
-  document.getElementById('helpfulBtn').addEventListener('click', () => {
-    const lang = getActiveChat()?.lastAnswerLanguage || 'en-IN';
-    appendMessage(uiText('thanks', lang), 'bot', { languageCode: lang });
-  });
   document.getElementById('newChatBtn').addEventListener('click', beginNewChat);
   document.getElementById('deleteChatBtn').addEventListener('click', deleteActiveChat);
   document.getElementById('messageInput').addEventListener('keydown', (event) => {
