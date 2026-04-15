@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JanSahayak Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Sans:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-shape bg-shape-1"></div>
+  <div class="bg-shape bg-shape-2"></div>
+
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>JanSahayak</h1>
+        <p>Unified multilingual citizen services assistant</p>
+      </div>
+
+      <div class="chat-controls">
+        <button id="newChatBtn" class="primary">+ New Chat</button>
+        <button id="deleteChatBtn" class="danger">Delete Chat</button>
+      </div>
+
+      <div class="chat-list-wrap">
+        <label class="section-label">Conversations</label>
+        <div id="chatList" class="chat-list"></div>
+      </div>
+
+      <div class="card">
+        <label for="apiBase">API Base URL</label>
+        <input id="apiBase" value="http://localhost:8000" />
+      </div>
+
+      <div class="card">
+        <label for="channelSelect">Channel</label>
+        <select id="channelSelect">
+          <option value="web">Web Chat</option>
+          <option value="whatsapp">WhatsApp Mock</option>
+        </select>
+      </div>
+
+      <div class="card">
+        <label for="locationHint">Location Hint</label>
+        <input id="locationHint" placeholder="Patna, Bihar or 800001" />
+      </div>
+    </aside>
+
+    <main class="main-panel">
+      <section class="hero">
+        <div>
+          <h2>Citizen Assistant Console</h2>
+          <p>Auto language detection, inline voice input, WhatsApp simulation, and feedback-driven improvement.</p>
+        </div>
+      </section>
+
+      <section class="chat-wrapper">
+        <div class="phone-frame">
+          <div class="phone-header">Conversation</div>
+          <div id="messages" class="messages"></div>
+          <div class="composer">
+            <div class="input-wrap">
+              <textarea id="messageInput" placeholder="Type your message or use voice input..." aria-label="Message input"></textarea>
+              <button id="micBtn" class="mic-btn" aria-label="Voice input" title="Voice input">🎤</button>
+            </div>
+            <div class="composer-actions">
+              <button id="sendBtn" class="primary">Send</button>
+              <button id="ttsBtn" class="secondary">API TTS</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="side-actions">
+          <button id="helpfulBtn" class="secondary">Helpful</button>
+          <button id="retryBtn" class="danger">Not Helpful - Improve</button>
+          <div class="debug-box">
+            <h3>Last Response Metadata</h3>
+            <pre id="debugMeta">No calls yet.</pre>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
