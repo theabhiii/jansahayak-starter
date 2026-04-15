@@ -22,6 +22,9 @@ class ChatResponse(BaseModel):
     actions: List[str]
     feedback_token: str
     language_trace: Dict[str, Any]
+    profile: Optional[Dict[str, Any]] = None
+    follow_up_question: Optional[str] = None
+    follow_up_options: List[Dict[str, str]] = Field(default_factory=list)
 
 
 class FeedbackRequest(BaseModel):

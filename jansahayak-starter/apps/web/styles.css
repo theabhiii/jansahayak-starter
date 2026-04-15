@@ -348,6 +348,78 @@ textarea {
   gap: 6px;
 }
 
+.feedback-row {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #b6c9b3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.feedback-btn {
+  width: auto;
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+
+.feedback-status {
+  font-size: 0.78rem;
+  color: #3a5d41;
+}
+
+.feedback-form {
+  margin-top: 8px;
+  border: 1px solid #c6d8c3;
+  background: #f4faf2;
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.feedback-form h4 {
+  margin: 0;
+  font-size: 0.84rem;
+}
+
+.feedback-form textarea,
+.feedback-form select {
+  font-size: 0.84rem;
+  min-height: 40px;
+}
+
+.feedback-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.feedback-actions button {
+  width: auto;
+  min-height: 32px;
+  font-size: 0.8rem;
+  padding: 6px 10px;
+}
+
+.followup-options {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.followup-option {
+  width: auto;
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
 .thinking-toggle {
   width: auto;
   min-height: 30px;

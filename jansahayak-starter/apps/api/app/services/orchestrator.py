@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any
 from uuid import uuid4
 
 from ..core.config import get_settings
@@ -19,6 +20,49 @@ class Orchestrator:
     CLEAR_LANGUAGE_THRESHOLD = 0.62
     LOW_CONFIDENCE_THRESHOLD = 0.4
     MAX_HISTORY_TURNS = 6
+    IN_SCOPE_KEYWORDS = {
+        "scheme", "schemes", "yojana", "eligibility", "eligible", "apply", "application", "status",
+        "grievance", "complaint", "benefit", "subsidy", "certificate", "ration", "pds",
+        "citizen service", "government service", "kisan", "farmer", "student", "women entrepreneur",
+        "location", "pincode", "district", "state",
+        "योजना", "पात्रता", "आवेदन", "शिकायत", "लाभ", "किसान", "छात्र", "महिला",
+    }
+    OUT_OF_SCOPE_HINTS = {
+        "capital of", "weather", "temperature", "movie", "film", "song", "cricket score",
+        "stock price", "bitcoin", "programming", "recipe", "restaurant", "travel plan",
+    }
+    PROFILE_I18N: dict[str, dict[str, str]] = {
+        "hi-IN": {
+            "To personalize results, please share your location first.": "परिणामों को व्यक्तिगत बनाने के लिए, कृपया पहले अपना स्थान साझा करें।",
+            "Which category best matches your need?": "आपकी आवश्यकता के लिए कौन-सी श्रेणी सबसे उपयुक्त है?",
+            "Who is the beneficiary for this request?": "इस अनुरोध के लिए लाभार्थी कौन है?",
+            "What type of grievance do you want to raise?": "आप किस प्रकार की शिकायत दर्ज करना चाहते हैं?",
+            "Delhi": "दिल्ली",
+            "Karnataka": "कर्नाटक",
+            "Bihar": "बिहार",
+            "Maharashtra": "महाराष्ट्र",
+            "Uttar Pradesh": "उत्तर प्रदेश",
+            "I will type my pincode": "मैं अपना पिनकोड लिखूंगा/लिखूंगी",
+            "Farmer schemes": "किसान योजनाएं",
+            "Student schemes": "छात्र योजनाएं",
+            "Women entrepreneur schemes": "महिला उद्यमी योजनाएं",
+            "Citizen services": "नागरिक सेवाएं",
+            "Grievance support": "शिकायत सहायता",
+            "Myself": "स्वयं",
+            "My family": "मेरा परिवार",
+            "Community/group": "समुदाय/समूह",
+            "Ration/PDS issue": "राशन/पीडीएस समस्या",
+            "Certificate/service delay": "प्रमाणपत्र/सेवा में देरी",
+            "Benefit/payment delay": "लाभ/भुगतान में देरी",
+            "Other grievance": "अन्य शिकायत",
+        },
+        "es-ES": {
+            "To personalize results, please share your location first.": "Para personalizar los resultados, comparte primero tu ubicación.",
+            "Which category best matches your need?": "¿Qué categoría se ajusta mejor a tu necesidad?",
+            "Who is the beneficiary for this request?": "¿Quién es el beneficiario de esta solicitud?",
+            "What type of grievance do you want to raise?": "¿Qué tipo de queja deseas presentar?",
+        },
+    }
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -28,6 +72,7 @@ class Orchestrator:
         self.session_language_memory: dict[str, str] = {}
         self.session_history: dict[str, list[dict[str, str]]] = {}
         self.session_last_results: dict[str, list[dict[str, str]]] = {}
+        self.session_profiles: dict[str, dict[str, Any]] = {}
 
     def answer(
         self,
@@ -40,6 +85,99 @@ class Orchestrator:
         detection = detect_language(message)
         session_language = self._resolve_session_language(session_id, detection, language_code)
         history = self.session_history.get(session_id, [])
+        if not self._is_in_scope_query(message):
+            out_text = self._out_of_scope_message()
+            translated = self.sarvam.translate_response_text(
+                text=out_text,
+                source_language="en-IN",
+                target_language=session_language,
+                conversation_id=session_id,
+                channel=channel,
+            )
+            final_text = translated["text"]
+            self._append_history(session_id, "user", message)
+            self._append_history(session_id, "assistant", final_text)
+            return {
+                "session_id": session_id,
+                "session_language": session_language,
+                "language_code": session_language,
+                "detected_language": detection.language_code,
+                "detection_confidence": round(float(detection.confidence), 3),
+                "location": {
+                    "pincode": None,
+                    "state": self.settings.default_state,
+                    "district": self.settings.default_district,
+                    "matched_by": "default",
+                },
+                "answer": final_text,
+                "sources": [],
+                "actions": ["out_of_scope"],
+                "feedback_token": str(uuid4()),
+                "language_trace": {
+                    "detected_language": detection.language_code,
+                    "sent_response_language": session_language,
+                    "received_language": session_language,
+                    "mismatch_detected": False,
+                    "provider": "scope-guard",
+                    "request_payload": {},
+                    "translation_payload": translated.get("request_payload", {}),
+                    "translated_target_language": translated.get("target_language", session_language),
+                },
+                "profile": self.session_profiles.get(session_id, self._empty_profile()).copy(),
+                "follow_up_question": None,
+                "follow_up_options": [],
+            }
+        profile = self.session_profiles.setdefault(session_id, self._empty_profile())
+        self._update_profile_from_message(profile, message, location_hint)
+        profile["intent"] = self._detect_intent(message, history)
+
+        profiling_prompt = self._next_profiling_prompt(profile, message, location_hint)
+        if profiling_prompt is not None:
+            prompt_text, options = profiling_prompt
+            final_prompt = self._localize_profile_text(
+                text=prompt_text,
+                target_language=session_language,
+                conversation_id=session_id,
+                channel=channel,
+            )
+            localized_options = self._localize_follow_up_options(
+                options=options,
+                target_language=session_language,
+                conversation_id=session_id,
+                channel=channel,
+            )
+            self._append_history(session_id, "user", message)
+            self._append_history(session_id, "assistant", final_prompt)
+            return {
+                "session_id": session_id,
+                "session_language": session_language,
+                "language_code": session_language,
+                "detected_language": detection.language_code,
+                "detection_confidence": round(float(detection.confidence), 3),
+                "location": {
+                    "state": profile.get("state") or self.settings.default_state,
+                    "district": profile.get("district") or self.settings.default_district,
+                    "pincode": profile.get("pincode") or "",
+                },
+                "answer": final_prompt,
+                "sources": [],
+                "actions": ["profiling"],
+                "feedback_token": str(uuid4()),
+                "language_trace": {
+                    "detected_language": detection.language_code,
+                    "sent_response_language": session_language,
+                    "received_language": session_language,
+                    "mismatch_detected": False,
+                    "provider": "profiling-flow",
+                    "request_payload": {},
+                    "translation_payload": {},
+                    "translated_target_language": session_language,
+                },
+                "profile": profile.copy(),
+                "follow_up_question": final_prompt,
+                "follow_up_options": localized_options,
+            }
+
         last_results = self.session_last_results.get(session_id, [])
         contextual_query = self._build_contextual_query(message, history, last_results)
 
@@ -137,6 +275,9 @@ class Orchestrator:
                 "translation_payload": translated.get("request_payload", {}),
                 "translated_target_language": translated.get("target_language", session_language),
             },
+            "profile": profile.copy(),
+            "follow_up_question": None,
+            "follow_up_options": [],
         }
 
     def retry(self, question: str, original_answer: str, reason: str | None, sources: list, location: dict, language_code: str) -> str:
@@ -242,6 +383,251 @@ class Orchestrator:
 
         parts.append(message)
         return " | ".join(parts)
+
+    def _empty_profile(self) -> dict[str, Any]:
+        return {
+            "intent": None,
+            "state": None,
+            "district": None,
+            "pincode": None,
+            "location_collected": False,
+            "category": None,
+            "beneficiary": None,
+            "grievance_type": None,
+        }
+
+    def _detect_intent(self, message: str, history: list[dict[str, str]]) -> str:
+        text = f"{' '.join(h.get('content', '') for h in history[-4:])} {message}".lower()
+        if any(token in text for token in ["grievance", "complaint", "issue", "ration", "shikayat"]):
+            return "grievance_routing"
+        if any(token in text for token in ["eligibility", "eligible", "can i apply", "paatrata"]):
+            return "eligibility_check"
+        return "scheme_discovery"
+
+    def _update_profile_from_message(self, profile: dict[str, Any], message: str, location_hint: str | None) -> None:
+        text = (message or "").lower().strip()
+        hint = (location_hint or "").lower()
+
+        resolved = resolve_location(
+            text=text,
+            location_hint=hint,
+            default_state=self.settings.default_state,
+            default_district=self.settings.default_district,
+        )
+        if resolved.get("matched_by") != "default":
+            profile["state"] = resolved.get("state")
+            profile["district"] = resolved.get("district")
+            profile["pincode"] = resolved.get("pincode")
+            profile["location_collected"] = True
+
+        if text in {"farmer", "student", "women entrepreneur", "citizen service", "grievance"}:
+            profile["category"] = text if text != "grievance" else "grievance"
+        if text in {"self", "family", "community"}:
+            profile["beneficiary"] = text
+        if text in {"ration", "certificate services", "benefit delay", "other grievance"}:
+            profile["grievance_type"] = text
+
+        if any(token in text for token in ["farmer", "agriculture", "pm-kisan"]):
+            profile["category"] = "farmer"
+        elif any(token in text for token in ["student", "education", "scholarship"]):
+            profile["category"] = "student"
+        elif any(token in text for token in ["women", "woman", "entrepreneur", "udyogini"]):
+            profile["category"] = "women entrepreneur"
+        elif any(token in text for token in ["citizen service", "certificate", "e-district"]):
+            profile["category"] = "citizen service"
+        elif "grievance" in text:
+            profile["category"] = "grievance"
+
+        if any(token in text for token in ["self", "myself"]):
+            profile["beneficiary"] = "self"
+        elif any(token in text for token in ["family", "parents", "household"]):
+            profile["beneficiary"] = "family"
+        elif any(token in text for token in ["community", "group", "village"]):
+            profile["beneficiary"] = "community"
+
+        if any(token in text for token in ["ration", "pds"]):
+            profile["grievance_type"] = "ration"
+        elif any(token in text for token in ["certificate", "document"]):
+            profile["grievance_type"] = "certificate services"
+        elif any(token in text for token in ["payment", "benefit not received"]):
+            profile["grievance_type"] = "benefit delay"
+
+        pincode_match = re.search(r"\b(\d{6})\b", f"{text} {hint}")
+        if pincode_match:
+            profile["pincode"] = pincode_match.group(1)
+
+    def _next_profiling_prompt(
+        self,
+        profile: dict[str, Any],
+        message: str,
+        location_hint: str | None,
+    ) -> tuple[str, list[dict[str, str]]] | None:
+        has_profile_location = bool(profile.get("location_collected") or profile.get("state") or profile.get("pincode"))
+        if not has_profile_location and not self._has_explicit_location(message, location_hint):
+            return (
+                "To personalize results, please share your location first.",
+                [
+                    {"value": "Delhi", "label": "Delhi"},
+                    {"value": "Karnataka", "label": "Karnataka"},
+                    {"value": "Bihar", "label": "Bihar"},
+                    {"value": "Maharashtra", "label": "Maharashtra"},
+                    {"value": "Uttar Pradesh", "label": "Uttar Pradesh"},
+                    {"value": "I will type my pincode", "label": "I will type my pincode"},
+                ],
+            )
+
+        if not profile.get("category"):
+            return (
+                "Which category best matches your need?",
+                [
+                    {"value": "farmer", "label": "Farmer schemes"},
+                    {"value": "student", "label": "Student schemes"},
+                    {"value": "women entrepreneur", "label": "Women entrepreneur schemes"},
+                    {"value": "citizen service", "label": "Citizen services"},
+                    {"value": "grievance", "label": "Grievance support"},
+                ],
+            )
+
+        if profile.get("intent") in {"scheme_discovery", "eligibility_check"} and not profile.get("beneficiary"):
+            return (
+                "Who is the beneficiary for this request?",
+                [
+                    {"value": "self", "label": "Myself"},
+                    {"value": "family", "label": "My family"},
+                    {"value": "community", "label": "Community/group"},
+                ],
+            )
+
+        if profile.get("intent") == "grievance_routing" and not profile.get("grievance_type"):
+            return (
+                "What type of grievance do you want to raise?",
+                [
+                    {"value": "ration", "label": "Ration/PDS issue"},
+                    {"value": "certificate services", "label": "Certificate/service delay"},
+                    {"value": "benefit delay", "label": "Benefit/payment delay"},
+                    {"value": "other grievance", "label": "Other grievance"},
+                ],
+            )
+
+        return None
+
+    def _has_explicit_location(self, message: str, location_hint: str | None) -> bool:
+        text = f"{(message or '').lower()} {(location_hint or '').lower()}"
+        if re.search(r"\b\d{6}\b", text):
+            return True
+        known_states = [
+            "delhi", "karnataka", "bihar", "maharashtra", "uttar pradesh",
+            "tamil nadu", "rajasthan", "west bengal", "gujarat", "kerala",
+        ]
+        return any(state in text for state in known_states)
+
+    def _localize_follow_up_options(
+        self,
+        options: list[dict[str, str]],
+        target_language: str,
+        conversation_id: str,
+        channel: str,
+    ) -> list[dict[str, str]]:
+        localized: list[dict[str, str]] = []
+        for opt in options:
+            value = opt.get("value", "")
+            label = opt.get("label", value)
+            translated_text = self._localize_profile_text(
+                text=label,
+                target_language=target_language,
+                conversation_id=conversation_id,
+                channel=channel,
+            )
+            localized.append(
+                {
+                    "value": value,
+                    "label": translated_text,
+                }
+            )
+        return localized
+
+    def _localize_profile_text(
+        self,
+        text: str,
+        target_language: str,
+        conversation_id: str,
+        channel: str,
+    ) -> str:
+        normalized = normalize_language_code(target_language) or "en-IN"
+        if normalized == "en-IN":
+            return text
+        mapped = self.PROFILE_I18N.get(normalized, {}).get(text)
+        if mapped:
+            return mapped
+        hardcoded = self._regional_profile_fallback(normalized, text)
+        if hardcoded:
+            return hardcoded
+        translated = self.sarvam.translate_response_text(
+            text=text,
+            source_language="en-IN",
+            target_language=normalized,
+            conversation_id=conversation_id,
+            channel=channel,
+        )
+        return translated.get("text", text)
+
+    def _regional_profile_fallback(self, language_code: str, text: str) -> str | None:
+        tables: dict[str, dict[str, str]] = {
+            "ta-IN": {
+                "To personalize results, please share your location first.": "\u0b89\u0b99\u0bcd\u0b95\u0bb3\u0bcd \u0ba4\u0bc7\u0bb5\u0bc8\u0b95\u0bcd\u0b95\u0bc7\u0bb1\u0bcd\u0bb1 \u0bae\u0bc1\u0b9f\u0bbf\u0bb5\u0bc1\u0b95\u0bb3\u0bc1\u0b95\u0bcd\u0b95\u0bbe\u0b95, \u0bae\u0bc1\u0ba4\u0bb2\u0bbf\u0bb2\u0bcd \u0b89\u0b99\u0bcd\u0b95\u0bb3\u0bcd \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bbf\u0b9f\u0ba4\u0bcd\u0ba4\u0bc8 \u0baa\u0b95\u0bbf\u0bb0\u0bb5\u0bc1\u0bae\u0bcd.",
+                "Which category best matches your need?": "\u0b89\u0b99\u0bcd\u0b95\u0bb3\u0bcd \u0ba4\u0bc7\u0bb5\u0bc8\u0b95\u0bcd\u0b95\u0bc1 \u0bae\u0bbf\u0b95\u0bb5\u0bc1\u0bae\u0bcd \u0baa\u0bca\u0bb0\u0bc1\u0ba4\u0bcd\u0ba4\u0bae\u0bbe\u0ba9 \u0baa\u0bbf\u0bb0\u0bbf\u0bb5\u0bc1 \u0b8e\u0ba4\u0bc1?",
+                "Farmer schemes": "\u0bb5\u0bbf\u0bb5\u0bb8\u0bbe\u0baf\u0bbf \u0ba4\u0bbf\u0b9f\u0bcd\u0b9f\u0b99\u0bcd\u0b95\u0bb3\u0bcd",
+                "Student schemes": "\u0bae\u0bbe\u0ba3\u0bb5\u0bb0\u0bcd \u0ba4\u0bbf\u0b9f\u0bcd\u0b9f\u0b99\u0bcd\u0b95\u0bb3\u0bcd",
+                "Women entrepreneur schemes": "\u0baa\u0bc6\u0ba3\u0bcd \u0ba4\u0bca\u0bb4\u0bbf\u0bb2\u0bcd\u0bae\u0bc1\u0ba9\u0bc8\u0bb5\u0bcb\u0bb0\u0bcd \u0ba4\u0bbf\u0b9f\u0bcd\u0b9f\u0b99\u0bcd\u0b95\u0bb3\u0bcd",
+            },
+            "te-IN": {
+                "To personalize results, please share your location first.": "\u0c35\u0c4d\u0caf\u0c15\u0c4d\u0c24\u0c3f\u0c17\u0c24 \u0c2b\u0c32\u0c3f\u0c24\u0c3e\u0c32 \u0c15\u0c4b\u0c38\u0c02, \u0c2e\u0c41\u0c02\u0c26\u0c41 \u0c2e\u0c40 \u0c38\u0c4d\u0c25\u0c32\u0c3e\u0c28\u0c4d\u0c28\u0c3f \u0c2a\u0c02\u0c1a\u0c41\u0c15\u0c4b\u0c02\u0c21\u0c3f.",
+                "Which category best matches your need?": "\u0c2e\u0c40 \u0c05\u0c35\u0c38\u0c30\u0c3e\u0c28\u0c3f\u0c15\u0c3f \u0c0f \u0c35\u0c30\u0c4d\u0c17\u0c02 \u0c2c\u0c3e\u0c17\u0c3e \u0c38\u0c30\u0c3f\u0c2a\u0c4b\u0c24\u0c41\u0c02\u0c26\u0c3f?",
+                "Farmer schemes": "\u0c30\u0c48\u0c24\u0c41 \u0c2a\u0c25\u0c15\u0c3e\u0c32\u0c41",
+                "Student schemes": "\u0c35\u0c3f\u0c26\u0c4d\u0c2f\u0c3e\u0c30\u0c4d\u0c25\u0c3f \u0c2a\u0c25\u0c15\u0c3e\u0c32\u0c41",
+                "Women entrepreneur schemes": "\u0c2e\u0c39\u0c3f\u0c33 \u0c09\u0c26\u0c4d\u0c2f\u0c2e\u0c3f\u0c32 \u0c2a\u0c25\u0c15\u0c3e\u0c32\u0c41",
+            },
+            "kn-IN": {
+                "To personalize results, please share your location first.": "\u0cb5\u0cc8\u0caf\u0c95\u0ccd\u0ca4\u0cbf\u0c95\u0cc0\u0c95\u0cc3\u0ca4 \u0cab\u0cb2\u0cbf\u0ca4\u0cbe\u0c82\u0cb6\u0c97\u0cb3\u0cbf\u0c97\u0cc6 \u0cae\u0cca\u0ca6\u0cb2\u0cc1 \u0ca8\u0cbf\u0cae\u0ccd\u0cae \u0cb8\u0ccd\u0ca5\u0cb3\u0cb5\u0ca8\u0ccd\u0ca8\u0cc1 \u0cb9\u0c82\u0c9a\u0cbf\u0c95\u0ccb\u0cb3\u0ccd\u0cb3\u0cbf.",
+                "Which category best matches your need?": "\u0ca8\u0cbf\u0cae\u0ccd\u0cae \u0c85\u0cb5\u0cb6\u0ccd\u0caf\u0c95\u0ca4\u0cc6\u0c97\u0cc6 \u0caf\u0cbe\u0cb5 \u0cb5\u0cb0\u0ccd\u0c97 \u0cb9\u0cc6\u0c9a\u0ccd\u0c9a\u0cc1 \u0cb8\u0cc2\u0c95\u0ccd\u0ca4?",
+                "Farmer schemes": "\u0cb0\u0cc8\u0ca4 \u0caf\u0ccb\u0c9c\u0ca8\u0cc6\u0c97\u0cb3\u0cc1",
+                "Student schemes": "\u0cb5\u0cbf\u0ca6\u0ccd\u0caf\u0cbe\u0cb0\u0ccd\u0ca5\u0cbf \u0caf\u0ccb\u0c9c\u0ca8\u0cc6\u0c97\u0cb3\u0cc1",
+                "Women entrepreneur schemes": "\u0cae\u0cb9\u0cbf\u0cb3\u0cbe \u0c89\u0ca6\u0ccd\u0caf\u0cae\u0cbf \u0caf\u0ccb\u0c9c\u0ca8\u0cc6\u0c97\u0cb3\u0cc1",
+            },
+            "ml-IN": {
+                "To personalize results, please share your location first.": "\u0d35\u0d4d\u0d2f\u0d15\u0d4d\u0d24\u0d3f\u0d17\u0d24 \u0d2b\u0d32\u0d19\u0d4d\u0d19\u0d7e\u0d15\u0d4d\u0d15\u0d3e\u0d2f\u0d3f \u0d06\u0d26\u0d4d\u0d2f\u0d02 \u0d28\u0d3f\u0d19\u0d4d\u0d19\u0d33\u0d41\u0d1f\u0d46 \u0d38\u0d4d\u0d25\u0d32\u0d02 \u0d2a\u0d19\u0d4d\u0d15\u0d3f\u0d1f\u0d41\u0d15.",
+                "Which category best matches your need?": "\u0d28\u0d3f\u0d19\u0d4d\u0d19\u0d33\u0d41\u0d1f\u0d46 \u0d06\u0d35\u0d36\u0d4d\u0d2f\u0d24\u0d2f\u0d4d\u0d15\u0d4d\u0d15\u0d4d \u0d0f\u0d31\u0d4d\u0d31\u0d35\u0d41\u0d02 \u0d2f\u0d4b\u0d1c\u0d3f\u0d1a\u0d4d\u0d1a \u0d35\u0d3f\u0d2d\u0d3e\u0d17\u0d02 \u0d0f\u0d24\u0d3e\u0d23\u0d4d?",
+                "Farmer schemes": "\u0d15\u0d30\u0d4d\u0d37\u0d15 \u0d2a\u0d26\u0d4d\u0d27\u0d24\u0d3f\u0d15\u0d7e",
+                "Student schemes": "\u0d35\u0d3f\u0d26\u0d4d\u0d2f\u0d3e\u0d30\u0d4d\u0d25\u0d3f \u0d2a\u0d26\u0d4d\u0d27\u0d24\u0d3f\u0d15\u0d7e",
+                "Women entrepreneur schemes": "\u0d35\u0d28\u0d3f\u0d24\u0d3e \u0d09\u0d26\u0d4d\u0d2f\u0d2e\u0d3f \u0d2a\u0d26\u0d4d\u0d27\u0d24\u0d3f\u0d15\u0d7e",
+            },
+        }
+        return tables.get(language_code, {}).get(text)
+
+    def _is_in_scope_query(self, message: str) -> bool:
+        text = (message or "").strip().lower()
+        if not text:
+            return True
+        in_scope_hit = any(keyword in text for keyword in self.IN_SCOPE_KEYWORDS)
+        out_scope_hit = any(hint in text for hint in self.OUT_OF_SCOPE_HINTS)
+
+        # Keep the guard conservative: only reject when query is clearly out-of-domain
+        # and there are no citizen-service signals.
+        if out_scope_hit and not in_scope_hit:
+            return False
+
+        # Location-like requests are usually in scope for this assistant.
+        if re.search(r"\b\d{6}\b", text):
+            return True
+
+        # Prefer answering by default to avoid false positives in regional languages.
+        return True
+
+    def _out_of_scope_message(self) -> str:
+        return (
+            "I can help only with Indian government schemes, eligibility, applications, service status, "
+            "and grievance routing. Please ask a related citizen-service question."
+        )
 
     def _language_error(self, language_code: str) -> str:
         if language_code == "hi-IN":
