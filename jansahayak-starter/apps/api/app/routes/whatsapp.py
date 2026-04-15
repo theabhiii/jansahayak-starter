@@ -1,5 +1,8 @@
+import base64
+import uuid as _uuid
+
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from xml.sax.saxutils import escape
 
 from ..core.config import get_settings
@@ -10,10 +13,12 @@ from ..services.sarvam_service import SarvamService
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 orchestrator = Orchestrator()
 sarvam = SarvamService()
+_audio_store: dict[str, bytes] = {}  # id -> raw WAV bytes
 _pending_follow_up_options: dict[str, list[dict[str, str]]] = {}
 _pending_language_selection: dict[str, bool] = {}
 _pending_initial_message: dict[str, str] = {}
 _pending_feedback: dict[str, dict[str, object]] = {}
+_pending_pincode_input: dict[str, bool] = {}
 
 _LANGUAGE_CHOICES: list[dict[str, str]] = [
     {"value": "en-IN", "label": "English"},
@@ -151,6 +156,7 @@ def _clear_session_state(session_id: str) -> None:
     _pending_language_selection.pop(session_id, None)
     _pending_initial_message.pop(session_id, None)
     _pending_feedback.pop(session_id, None)
+    _pending_pincode_input.pop(session_id, None)
 
     orchestrator.session_language_memory.pop(session_id, None)
     orchestrator.session_history.pop(session_id, None)
@@ -363,6 +369,13 @@ def _maybe_handle_feedback_input(session_id: str, incoming_message: str) -> str 
 
 def _answer_for_whatsapp(session_id: str, incoming_message: str, language_code: str | None = None) -> str:
     mapped_message = _map_whatsapp_selection(session_id=session_id, user_input=incoming_message)
+
+    if mapped_message == "I will type my pincode":
+        _pending_pincode_input[session_id] = True
+        _pending_follow_up_options.pop(session_id, None)
+        lang = language_code or _session_language(session_id)
+        return _localize_text(session_id, "Please type your 6-digit pincode:", language_code=lang)
+
     response = orchestrator.answer(
         message=mapped_message,
         session_id=session_id,
@@ -406,6 +419,14 @@ def _handle_whatsapp_user_input(session_id: str, incoming_message: str) -> str:
     if feedback_reply is not None:
         return feedback_reply
 
+    if _pending_pincode_input.get(session_id):
+        import re
+        if re.search(r"\b\d{6}\b", incoming_message):
+            _pending_pincode_input.pop(session_id, None)
+            return _answer_for_whatsapp(session_id=session_id, incoming_message=incoming_message)
+        lang = _session_language(session_id)
+        return _localize_text(session_id, "Please enter a valid 6-digit pincode:", language_code=lang)
+
     # First-touch language menu for better guided onboarding.
     if _pending_language_selection.get(session_id):
         chosen = _resolve_language_selection(incoming_message)
@@ -428,6 +449,43 @@ def _handle_whatsapp_user_input(session_id: str, incoming_message: str) -> str:
         return _format_language_menu(session_id)
 
     return _answer_for_whatsapp(session_id=session_id, incoming_message=incoming_message)
+
+
+def _public_base_url() -> str | None:
+    """Return the public ngrok URL if available, else None."""
+    try:
+        import httpx as _httpx
+        resp = _httpx.get("http://localhost:4040/api/tunnels", timeout=1.0)
+        tunnels = resp.json().get("tunnels", [])
+        for t in tunnels:
+            if t.get("proto") == "https":
+                return t["public_url"].rstrip("/")
+    except Exception:
+        pass
+    return None
+
+
+def _store_audio_and_url(audio_base64: str) -> str | None:
+    """Decode base64 WAV, store it, return public URL or None if ngrok unavailable."""
+    base_url = _public_base_url()
+    if not base_url:
+        return None
+    try:
+        audio_bytes = base64.b64decode(audio_base64)
+        audio_id = _uuid.uuid4().hex
+        _audio_store[audio_id] = audio_bytes
+        return f"{base_url}/whatsapp/audio/{audio_id}"
+    except Exception:
+        return None
+
+
+@router.get("/audio/{audio_id}")
+def serve_audio(audio_id: str):
+    """Serve a generated TTS audio file for Twilio Media."""
+    audio_bytes = _audio_store.pop(audio_id, None)
+    if audio_bytes is None:
+        raise HTTPException(status_code=404, detail="Audio not found")
+    return Response(content=audio_bytes, media_type="audio/wav")
 
 
 @router.post("/webhook")
@@ -496,22 +554,33 @@ async def twilio_webhook(request: Request):
 
     # Twilio WhatsApp voice notes are sent as media with empty Body.
     if media_count > 0 and media_content_type_0.startswith("audio/"):
+        # Pass current session language (or None = auto-detect) to Sarvam STT.
+        session_lang = orchestrator.session_language_memory.get(from_number)
         stt = sarvam.transcribe_audio_url(
             media_url=media_url_0,
             mime_type=media_content_type_0 or "audio/ogg",
             auth_username=settings.twilio_account_sid,
             auth_password=settings.twilio_auth_token,
-            language_code=None,
+            language_code=session_lang,
         )
         transcript = (stt.get("transcript") or "").strip()
+        detected_lang = stt.get("language_code")
+
+        # If Sarvam detected a language and session has none yet, set it — skips language menu.
+        if detected_lang and from_number not in orchestrator.session_language_memory:
+            orchestrator.session_language_memory[from_number] = detected_lang
+            _pending_language_selection.pop(from_number, None)
+            _pending_initial_message.pop(from_number, None)
+
         if transcript:
             reply_text = _handle_whatsapp_user_input(session_id=from_number, incoming_message=transcript)
         elif incoming_message:
             reply_text = _handle_whatsapp_user_input(session_id=from_number, incoming_message=incoming_message)
         else:
-            reply_text = (
-                "I received your voice note but could not transcribe it. "
-                "Please resend audio clearly or send text."
+            reply_text = _localize_text(
+                from_number,
+                "I received your voice note but could not transcribe it. Please resend audio clearly or send text.",
+                language_code=session_lang,
             )
             _clear_session_state(from_number)
     elif not incoming_message:
@@ -523,7 +592,26 @@ async def twilio_webhook(request: Request):
     reply_text = _with_end_session_option(from_number, reply_text)
 
     parts = _chunk_message(reply_text)
-    messages_xml = "".join(f"<Message>{escape(part)}</Message>" for part in parts if part is not None)
+
+    # Generate TTS audio for the first chunk (skip menu/numbered lists — they don't read well).
+    audio_url: str | None = None
+    first_part = parts[0] if parts else ""
+    is_menu = any(line.strip().startswith(("1.", "2.", "3.")) for line in first_part.splitlines())
+    if first_part and not is_menu:
+        session_lang = orchestrator.session_language_memory.get(from_number, "en-IN")
+        tts = sarvam.text_to_speech(text=first_part, language_code=session_lang)
+        if tts.get("status") == "ok" and tts.get("audio_base64"):
+            audio_url = _store_audio_and_url(tts["audio_base64"])
+
+    messages_xml = ""
+    for idx, part in enumerate(parts):
+        if part is None:
+            continue
+        if idx == 0 and audio_url:
+            messages_xml += f"<Message>{escape(part)}<Media>{escape(audio_url)}</Media></Message>"
+        else:
+            messages_xml += f"<Message>{escape(part)}</Message>"
+
     twiml = f"<?xml version='1.0' encoding='UTF-8'?><Response>{messages_xml}</Response>"
     return PlainTextResponse(content=twiml, media_type="application/xml")
 

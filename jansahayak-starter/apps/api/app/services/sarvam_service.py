@@ -561,13 +561,15 @@ class SarvamService:
             try:
                 codec = self._content_type_to_codec(mime_type)
                 file_tuple = (file_name, audio_bytes, mime_type)
-                resp = self._sdk_client.speech_to_text.transcribe(
-                    file=file_tuple,
-                    model="saarika:v2.5",
-                    mode="transcribe",
-                    language_code=normalized_language,
-                    input_audio_codec=codec,
-                )
+                transcribe_kwargs: dict[str, Any] = {
+                    "file": file_tuple,
+                    "model": "saarika:v2.5",
+                    "mode": "transcribe",
+                    "input_audio_codec": codec,
+                }
+                if normalized_language and normalized_language != "unknown":
+                    transcribe_kwargs["language_code"] = normalized_language
+                resp = self._sdk_client.speech_to_text.transcribe(**transcribe_kwargs)
 
                 transcript = ""
                 resolved_language = normalize_language_code(language_code) or "en-IN"
@@ -646,10 +648,28 @@ class SarvamService:
 
     def text_to_speech(self, text: str, language_code: str) -> dict:
         normalized_language = normalize_language_code(language_code) or "en-IN"
-        if not self.is_configured():
+        if not self.is_configured() or self._sdk_client is None:
             fake_audio = base64.b64encode(f"Demo audio for: {text}".encode("utf-8")).decode("utf-8")
             return {"status": "mocked", "detail": f"TTS fallback used for {normalized_language}", "audio_base64": fake_audio}
-        return {"status": "todo", "detail": "Implement Sarvam TTS SDK call here", "audio_base64": None}
+        try:
+            resp = self._sdk_client.text_to_speech.convert(
+                text=text[:2500],
+                target_language_code=normalized_language,
+                model="bulbul:v3",
+                enable_preprocessing=self.settings.sarvam_enable_preprocessing,
+            )
+            audios = getattr(resp, "audios", None) or (resp.get("audios") if isinstance(resp, dict) else None) or []
+            if audios:
+                return {
+                    "status": "ok",
+                    "detail": "TTS successful",
+                    "audio_base64": audios[0],
+                    "language_code": normalized_language,
+                    "provider": "sarvam-tts-sdk",
+                }
+        except Exception as exc:
+            logger.warning("sarvam_tts_failed err=%s", str(exc))
+        return {"status": "error", "detail": "TTS failed", "audio_base64": None, "language_code": normalized_language}
 
     def speech_to_text(
         self,
