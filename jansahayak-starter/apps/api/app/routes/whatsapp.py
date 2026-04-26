@@ -1,8 +1,11 @@
 import base64
+import logging
+from pathlib import Path
+import time
 import uuid as _uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import PlainTextResponse
 from xml.sax.saxutils import escape
 
 from ..core.config import get_settings
@@ -13,7 +16,10 @@ from ..services.sarvam_service import SarvamService
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 orchestrator = Orchestrator()
 sarvam = SarvamService()
-_audio_store: dict[str, bytes] = {}  # id -> raw WAV bytes
+logger = logging.getLogger(__name__)
+_PUBLIC_AUDIO_DIR = Path(__file__).resolve().parents[4] / "public" / "audio"
+_PUBLIC_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+_AUDIO_TTL_SECONDS = 60 * 60
 _pending_follow_up_options: dict[str, list[dict[str, str]]] = {}
 _pending_language_selection: dict[str, bool] = {}
 _pending_initial_message: dict[str, str] = {}
@@ -451,41 +457,33 @@ def _handle_whatsapp_user_input(session_id: str, incoming_message: str) -> str:
     return _answer_for_whatsapp(session_id=session_id, incoming_message=incoming_message)
 
 
-def _public_base_url() -> str | None:
-    """Return the public ngrok URL if available, else None."""
+def _cleanup_old_audio_files() -> None:
+    cutoff = time.time() - _AUDIO_TTL_SECONDS
     try:
-        import httpx as _httpx
-        resp = _httpx.get("http://localhost:4040/api/tunnels", timeout=1.0)
-        tunnels = resp.json().get("tunnels", [])
-        for t in tunnels:
-            if t.get("proto") == "https":
-                return t["public_url"].rstrip("/")
-    except Exception:
-        pass
-    return None
+        for audio_file in _PUBLIC_AUDIO_DIR.glob("*.mp3"):
+            if audio_file.stat().st_mtime < cutoff:
+                audio_file.unlink(missing_ok=True)
+    except Exception as exc:
+        logger.warning("audio_cleanup_failed err=%s", str(exc))
 
 
 def _store_audio_and_url(audio_base64: str) -> str | None:
-    """Decode base64 WAV, store it, return public URL or None if ngrok unavailable."""
-    base_url = _public_base_url()
+    """Decode base64 audio, write it to public storage, and return a Twilio-fetchable URL."""
+    settings = get_settings()
+    base_url = (settings.base_url or "").rstrip("/")
     if not base_url:
+        logger.warning("audio_url_generation_skipped reason=missing_base_url")
         return None
     try:
         audio_bytes = base64.b64decode(audio_base64)
-        audio_id = _uuid.uuid4().hex
-        _audio_store[audio_id] = audio_bytes
-        return f"{base_url}/whatsapp/audio/{audio_id}"
-    except Exception:
+        _cleanup_old_audio_files()
+        filename = f"{int(time.time() * 1000)}-{_uuid.uuid4().hex}.mp3"
+        file_path = _PUBLIC_AUDIO_DIR / filename
+        file_path.write_bytes(audio_bytes)
+        return f"{base_url}/public/audio/{filename}"
+    except Exception as exc:
+        logger.warning("audio_store_failed err=%s", str(exc))
         return None
-
-
-@router.get("/audio/{audio_id}")
-def serve_audio(audio_id: str):
-    """Serve a generated TTS audio file for Twilio Media."""
-    audio_bytes = _audio_store.pop(audio_id, None)
-    if audio_bytes is None:
-        raise HTTPException(status_code=404, detail="Audio not found")
-    return Response(content=audio_bytes, media_type="audio/wav")
 
 
 @router.post("/webhook")

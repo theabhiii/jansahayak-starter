@@ -263,6 +263,15 @@ class SarvamService:
         normalized_target = normalize_language_code(target_language) or "en-IN"
 
         resolved_source = normalized_source or normalize_language_code(self.settings.default_language) or "en-IN"
+
+        if resolved_source == normalized_target:
+            return {
+                "text": text,
+                "source_language": normalized_source,
+                "target_language": normalized_target,
+                "request_payload": {},
+            }
+
         payload = {
             "text": text,
             "source_language": resolved_source,
@@ -356,6 +365,9 @@ class SarvamService:
             return text
         resolved_source_code = normalize_language_code(source_language_code) or normalize_language_code(self.settings.default_language) or "en-IN"
         resolved_target_code = normalize_language_code(target_language_code) or "en-IN"
+
+        if resolved_source_code == resolved_target_code:
+            return text
 
         # Preferred path: Sarvam SDK call as shared by user.
         if self._sdk_client is not None:
