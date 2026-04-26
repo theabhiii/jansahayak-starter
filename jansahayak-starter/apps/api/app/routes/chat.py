@@ -30,11 +30,13 @@ def chat(payload: ChatRequest):
             result["audio_status"] = tts.get("status")
             result["audio_detail"] = tts.get("detail")
             result["audio_base64"] = tts.get("audio_base64")
+            result["audio_mime_type"] = tts.get("audio_mime_type")
     except Exception as exc:
         logger.warning("chat_tts_failed session_id=%s err=%s", payload.session_id, str(exc))
         result["audio_status"] = "error"
         result["audio_detail"] = "TTS generation failed"
         result["audio_base64"] = None
+        result["audio_mime_type"] = None
     return result
 
 

@@ -28,6 +28,7 @@ class ChatResponse(BaseModel):
     audio_status: Optional[str] = None
     audio_detail: Optional[str] = None
     audio_base64: Optional[str] = None
+    audio_mime_type: Optional[str] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -49,6 +50,7 @@ class VoiceResponse(BaseModel):
     status: str
     detail: str
     audio_base64: Optional[str] = None
+    audio_mime_type: Optional[str] = None
 
 
 class SpeechToTextRequest(BaseModel):

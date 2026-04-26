@@ -494,7 +494,7 @@ def _detect_audio_extension(audio_bytes: bytes) -> str:
     return "bin"
 
 
-def _store_audio_and_url(audio_base64: str, request: Request) -> str | None:
+def _store_audio_and_url(audio_base64: str, request: Request, audio_extension: str | None = None) -> str | None:
     """Decode base64 audio, write it to public storage, and return a Twilio-fetchable URL."""
     base_url = _resolve_public_base_url(request)
     if not base_url:
@@ -503,11 +503,13 @@ def _store_audio_and_url(audio_base64: str, request: Request) -> str | None:
     try:
         audio_bytes = base64.b64decode(audio_base64)
         _cleanup_old_audio_files()
-        extension = _detect_audio_extension(audio_bytes)
+        extension = (audio_extension or "").strip(".").lower() or _detect_audio_extension(audio_bytes)
         filename = f"{int(time.time() * 1000)}-{_uuid.uuid4().hex}.{extension}"
         file_path = _PUBLIC_AUDIO_DIR / filename
         file_path.write_bytes(audio_bytes)
-        return f"{base_url}/public/audio/{filename}"
+        audio_url = f"{base_url}/public/audio/{filename}"
+        logger.info("audio_url_generated url=%s extension=%s size_bytes=%s", audio_url, extension, len(audio_bytes))
+        return audio_url
     except Exception as exc:
         logger.warning("audio_store_failed err=%s", str(exc))
         return None
@@ -534,7 +536,13 @@ def webhook(payload: WhatsAppWebhookRequest):
     if _should_send_audio_reply(payload.from_number) and reply_text:
         tts = sarvam.text_to_speech(reply_text, session_language)
     else:
-        tts = {"status": "skipped", "detail": "Audio reply disabled for text-started session", "audio_base64": None}
+        tts = {
+            "status": "skipped",
+            "detail": "Audio reply disabled for text-started session",
+            "audio_base64": None,
+            "audio_mime_type": None,
+            "audio_extension": None,
+        }
     return {
         "to": payload.from_number,
         "channel": "whatsapp-mock",
@@ -542,6 +550,7 @@ def webhook(payload: WhatsAppWebhookRequest):
         "audio_status": tts.get("status"),
         "audio_detail": tts.get("detail"),
         "audio_base64": tts.get("audio_base64"),
+        "audio_mime_type": tts.get("audio_mime_type"),
         "meta": {
             "detected_language": session_language,
             "pending_language_selection": _pending_language_selection.get(payload.from_number, False),
@@ -653,14 +662,32 @@ async def twilio_webhook(request: Request):
         session_lang = orchestrator.session_language_memory.get(from_number, "en-IN")
         tts = sarvam.text_to_speech(text=first_part, language_code=session_lang)
         if tts.get("status") == "ok" and tts.get("audio_base64"):
-            audio_url = _store_audio_and_url(tts["audio_base64"], request)
+            audio_url = _store_audio_and_url(
+                tts["audio_base64"],
+                request,
+                audio_extension=tts.get("audio_extension"),
+            )
+        else:
+            logger.warning(
+                "whatsapp_tts_unavailable from=%s status=%s detail=%s",
+                from_number,
+                tts.get("status"),
+                tts.get("detail"),
+            )
+    elif _should_send_audio_reply(from_number):
+        logger.info(
+            "whatsapp_audio_reply_skipped from=%s first_part_present=%s is_menu=%s",
+            from_number,
+            bool(first_part),
+            is_menu,
+        )
 
     messages_xml = ""
     for idx, part in enumerate(parts):
         if part is None:
             continue
         if idx == 0 and audio_url:
-            messages_xml += f"<Message>{escape(part)}<Media>{escape(audio_url)}</Media></Message>"
+            messages_xml += f"<Message><Body>{escape(part)}</Body><Media>{escape(audio_url)}</Media></Message>"
         else:
             messages_xml += f"<Message>{escape(part)}</Message>"
 

@@ -661,13 +661,21 @@ class SarvamService:
     def text_to_speech(self, text: str, language_code: str) -> dict:
         normalized_language = normalize_language_code(language_code) or "en-IN"
         if not self.is_configured() or self._sdk_client is None:
-            fake_audio = base64.b64encode(f"Demo audio for: {text}".encode("utf-8")).decode("utf-8")
-            return {"status": "mocked", "detail": f"TTS fallback used for {normalized_language}", "audio_base64": fake_audio}
+            return {
+                "status": "mocked",
+                "detail": f"TTS fallback used for {normalized_language}",
+                "audio_base64": None,
+                "audio_mime_type": None,
+                "audio_extension": None,
+                "language_code": normalized_language,
+                "provider": "tts-fallback",
+            }
         try:
             resp = self._sdk_client.text_to_speech.convert(
                 text=text[:2500],
                 target_language_code=normalized_language,
                 model="bulbul:v3",
+                output_audio_codec="mp3",
                 enable_preprocessing=self.settings.sarvam_enable_preprocessing,
             )
             audios = getattr(resp, "audios", None) or (resp.get("audios") if isinstance(resp, dict) else None) or []
@@ -676,12 +684,21 @@ class SarvamService:
                     "status": "ok",
                     "detail": "TTS successful",
                     "audio_base64": audios[0],
+                    "audio_mime_type": "audio/mpeg",
+                    "audio_extension": "mp3",
                     "language_code": normalized_language,
                     "provider": "sarvam-tts-sdk",
                 }
         except Exception as exc:
             logger.warning("sarvam_tts_failed err=%s", str(exc))
-        return {"status": "error", "detail": "TTS failed", "audio_base64": None, "language_code": normalized_language}
+        return {
+            "status": "error",
+            "detail": "TTS failed",
+            "audio_base64": None,
+            "audio_mime_type": None,
+            "audio_extension": None,
+            "language_code": normalized_language,
+        }
 
     def speech_to_text(
         self,
