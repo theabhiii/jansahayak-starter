@@ -622,7 +622,7 @@ async def twilio_webhook(request: Request):
     # server is http://localhost:8000/... while Twilio signs the public ngrok URL.
     if settings.twilio_account_sid and settings.twilio_auth_token and not settings.debug:
         try:
-            from twilio.request_validator import RequestValidator
+            from twilio.request_validator import RequestValidator  # pyright: ignore[reportMissingImports]
             validator = RequestValidator(settings.twilio_auth_token)
             signature = request.headers.get("X-Twilio-Signature", "")
             # Reconstruct the public URL using forwarded headers (set by ngrok/proxy)
