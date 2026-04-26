@@ -729,13 +729,15 @@ async def twilio_webhook(request: Request):
         )
 
     messages_xml = ""
-    for idx, part in enumerate(parts):
+    for part in parts:
         if part is None:
             continue
-        if idx == 0 and audio_url:
-            messages_xml += f"<Message><Body>{escape(part)}</Body><Media>{escape(audio_url)}</Media></Message>"
-        else:
-            messages_xml += f"<Message>{escape(part)}</Message>"
+        messages_xml += f"<Message>{escape(part)}</Message>"
+
+    # Send the audio as a separate WhatsApp message. Twilio/WhatsApp handle
+    # audio media more reliably when it is not combined with a text body.
+    if audio_url:
+        messages_xml += f"<Message><Media>{escape(audio_url)}</Media></Message>"
 
     twiml = f"<?xml version='1.0' encoding='UTF-8'?><Response>{messages_xml}</Response>"
     return PlainTextResponse(content=twiml, media_type="application/xml")
