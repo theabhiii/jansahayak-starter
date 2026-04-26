@@ -212,7 +212,13 @@ class Orchestrator:
             default_state=self.settings.default_state,
             default_district=self.settings.default_district,
         )
-        results = self.kb.search(contextual_query, state=location["state"], district=location["district"])
+        results = self.kb.search(
+            contextual_query,
+            state=location["state"],
+            district=location["district"],
+            profile=profile,
+            intent=profile.get("intent"),
+        )
         self.session_last_results[session_id] = [
             {"id": r.get("id", ""), "title": r.get("title", "")}
             for r in results
@@ -220,7 +226,13 @@ class Orchestrator:
         eligibility = check_eligibility(contextual_query, location["state"])
         grievance = route_grievance(contextual_query, location["state"], location["district"])
         sources = [{"id": r["id"], "title": r["title"], "url": r["source_url"]} for r in results]
-        discovered_sources = self.kb.discover_sources(contextual_query, state=location["state"], limit=6)
+        discovered_sources = self.kb.discover_sources(
+            contextual_query,
+            state=location["state"],
+            limit=6,
+            profile=profile,
+            intent=profile.get("intent"),
+        )
         merged_sources: list[dict] = []
         seen_keys: set[str] = set()
         for src in sources + discovered_sources:
@@ -411,9 +423,46 @@ class Orchestrator:
                 selected = None
             if selected and selected.get("title"):
                 parts.append(f"Referenced scheme: {selected['title']}")
+        elif last_results and self._is_referential_follow_up(message):
+            recent_titles = [item.get("title", "").strip() for item in last_results[:2] if item.get("title")]
+            if recent_titles:
+                parts.append(f"Recent scheme context: {' | '.join(recent_titles)}")
 
         parts.append(message)
         return " | ".join(parts)
+
+    def _is_referential_follow_up(self, message: str) -> bool:
+        lowered = (message or "").lower().strip()
+        if not lowered:
+            return False
+
+        referential_terms = {
+            "this",
+            "that",
+            "it",
+            "its",
+            "they",
+            "them",
+            "these",
+            "those",
+            "documents",
+            "document",
+            "apply",
+            "application",
+            "eligibility",
+            "eligible",
+            "amount",
+            "benefit",
+            "steps",
+            "how",
+            "when",
+            "where",
+        }
+        tokens = set(re.findall(r"[a-z0-9]+", lowered))
+        if tokens & referential_terms:
+            return True
+
+        return len(tokens) <= 5
 
     def _empty_profile(self) -> dict[str, Any]:
         return {

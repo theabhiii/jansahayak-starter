@@ -108,7 +108,8 @@ class SarvamService:
                     f"Respond ONLY in language code {normalized_response}. "
                     "Keep responses concise and grounded in provided context. "
                     "Return only the final user-facing answer. "
-                    "Never reveal internal reasoning, analysis, planning steps, or self-talk."
+                    "Never reveal internal reasoning, analysis, planning steps, self-talk, "
+                    "or any section labelled thinking/reasoning."
                 )
                 body = {
                     "model": self.settings.sarvam_chat_model,
@@ -132,7 +133,7 @@ class SarvamService:
                         .get("content")
                     )
                     if isinstance(text, str) and text.strip():
-                        cleaned_text = self._strip_meta_reasoning(text.strip())
+                        cleaned_text = self.sanitize_user_facing_text(text.strip())
                         return {
                             "text": cleaned_text,
                             "language": normalized_response,
@@ -144,7 +145,7 @@ class SarvamService:
                 logger.warning("sarvam_chat_request_failed conversation_id=%s err=%s", conversation_id, str(exc))
 
         return {
-            "text": self._strip_meta_reasoning(draft_answer),
+            "text": self.sanitize_user_facing_text(draft_answer),
             "language": normalized_response,
             "provider": "mocked" if not self.is_configured() else "configured-fallback",
             "request_payload": payload,
@@ -298,7 +299,7 @@ class SarvamService:
         )
 
         return {
-            "text": translated,
+            "text": self.sanitize_user_facing_text(translated),
             "source_language": normalized_source,
             "target_language": normalized_target,
             "request_payload": payload,
@@ -481,10 +482,13 @@ class SarvamService:
 
         return text
 
-    def _strip_meta_reasoning(self, text: str) -> str:
+    def sanitize_user_facing_text(self, text: str) -> str:
         raw = (text or "").strip()
         if not raw:
             return raw
+
+        raw = self._strip_tagged_reasoning_blocks(raw)
+        raw = self._strip_labeled_reasoning_sections(raw)
 
         # If model adds meta preface before the real answer, keep the useful part.
         anchors = [
@@ -495,6 +499,7 @@ class SarvamService:
             "ये विकल्प",
             "options:",
             "उत्तर:",
+            "answer:",
         ]
         lowered = raw.lower()
         cut_idx = None
@@ -550,6 +555,47 @@ class SarvamService:
 
         cleaned = "\n".join(pruned).strip()
         return cleaned or raw
+
+    def _strip_meta_reasoning(self, text: str) -> str:
+        return self.sanitize_user_facing_text(text)
+
+    def _strip_tagged_reasoning_blocks(self, text: str) -> str:
+        stripped = re.sub(r"<\s*(think|thinking|analysis|reasoning)\s*>.*?<\s*/\s*\1\s*>", "", text, flags=re.IGNORECASE | re.DOTALL)
+        stripped = re.sub(r"`{3,}\s*(think|thinking|analysis|reasoning).*?`{3,}", "", stripped, flags=re.IGNORECASE | re.DOTALL)
+        return stripped.strip()
+
+    def _strip_labeled_reasoning_sections(self, text: str) -> str:
+        lines = text.splitlines()
+        cleaned: list[str] = []
+        skip_block = False
+        reasoning_headers = (
+            "thinking",
+            "analysis",
+            "reasoning",
+            "thought process",
+            "internal monologue",
+            "scratchpad",
+        )
+        answer_headers = (
+            "final answer",
+            "answer",
+            "response",
+        )
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            lowered = line.lower().strip("#*- ").rstrip(":")
+            if lowered in reasoning_headers:
+                skip_block = True
+                continue
+            if lowered in answer_headers:
+                skip_block = False
+                continue
+            if skip_block:
+                continue
+            cleaned.append(raw_line)
+
+        return "\n".join(cleaned).strip()
 
     def transcribe_audio_bytes(
         self,
@@ -660,6 +706,7 @@ class SarvamService:
 
     def text_to_speech(self, text: str, language_code: str) -> dict:
         normalized_language = normalize_language_code(language_code) or "en-IN"
+        clean_text = self.sanitize_user_facing_text(text)
         if not self.is_configured() or self._sdk_client is None:
             return {
                 "status": "mocked",
@@ -672,7 +719,7 @@ class SarvamService:
             }
         try:
             resp = self._sdk_client.text_to_speech.convert(
-                text=text[:2500],
+                text=clean_text[:2500],
                 target_language_code=normalized_language,
                 model="bulbul:v3",
                 output_audio_codec="mp3",
