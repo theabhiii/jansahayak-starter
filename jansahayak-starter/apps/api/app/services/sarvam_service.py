@@ -562,23 +562,6 @@ class SarvamService:
 
         return str(exc) or exc.__class__.__name__
 
-    def guess_audio_mime_type(self, audio_bytes: bytes) -> str | None:
-        if not audio_bytes:
-            return None
-        if audio_bytes.startswith(b"RIFF") and audio_bytes[8:12] == b"WAVE":
-            return "audio/wav"
-        if audio_bytes.startswith(b"OggS"):
-            return "audio/ogg"
-        if audio_bytes.startswith(b"ID3") or audio_bytes[:2] == b"\xff\xfb":
-            return "audio/mpeg"
-        if audio_bytes[:4] == b"fLaC":
-            return "audio/flac"
-        if len(audio_bytes) > 8 and audio_bytes[4:8] == b"ftyp":
-            return "audio/mp4"
-        if audio_bytes.startswith(b"\x1a\x45\xdf\xa3"):
-            return "audio/webm"
-        return None
-
     def transcribe_audio_bytes(
         self,
         *,

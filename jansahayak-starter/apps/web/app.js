@@ -5,9 +5,6 @@ const state = {
   chats: [],
   activeChatId: null,
   recognition: null,
-  mediaRecorder: null,
-  mediaStream: null,
-  recordedChunks: [],
   isRecording: false,
   voices: [],
 };
@@ -413,140 +410,6 @@ function getPreferredRecognitionLanguage() {
   if (chatLang) return chatLang;
   const browserLang = normalizeLangForSpeech(navigator.language || '');
   return browserLang || 'en-IN';
-}
-
-function setMicButtonState(isRecording, languageCode) {
-  const micBtn = document.getElementById('micBtn');
-  if (!micBtn) return;
-  const lang = languageCode || 'en-IN';
-  state.isRecording = isRecording;
-  micBtn.classList.toggle('recording', isRecording);
-  micBtn.setAttribute('aria-label', uiText(isRecording ? 'stopVoice' : 'startVoice', lang));
-  micBtn.title = uiText(isRecording ? 'stopVoice' : 'startVoice', lang);
-}
-
-function clearRecordingResources() {
-  if (state.mediaStream) {
-    state.mediaStream.getTracks().forEach((track) => track.stop());
-  }
-  state.mediaRecorder = null;
-  state.mediaStream = null;
-  state.recordedChunks = [];
-}
-
-function getSupportedRecordingMimeType() {
-  if (!window.MediaRecorder) return '';
-  const candidates = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus',
-    'audio/ogg',
-    'audio/mp4',
-  ];
-  return candidates.find((type) => window.MediaRecorder.isTypeSupported(type)) || '';
-}
-
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = String(reader.result || '');
-      const base64 = result.includes(',') ? result.split(',')[1] : '';
-      if (!base64) {
-        reject(new Error('Could not encode audio recording.'));
-        return;
-      }
-      resolve(base64);
-    };
-    reader.onerror = () => reject(reader.error || new Error('Could not read audio recording.'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function transcribeRecordedAudio() {
-  const chat = getActiveChat();
-  const input = document.getElementById('messageInput');
-  const apiBase = getApiBase();
-  const mimeType = state.mediaRecorder?.mimeType || getSupportedRecordingMimeType() || 'audio/webm';
-  const audioBlob = new Blob(state.recordedChunks, { type: mimeType });
-  const languageCode = chat?.lastAnswerLanguage || null;
-
-  clearRecordingResources();
-
-  if (!audioBlob.size) {
-    throw new Error('No audio was captured. Please try again.');
-  }
-
-  const audioBase64 = await blobToBase64(audioBlob);
-  const response = await fetch(`${apiBase}/voice/stt`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      audio_base64: audioBase64,
-      mime_type: mimeType,
-      language_code: languageCode,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`STT failed with ${response.status}`);
-  }
-
-  const data = await response.json();
-  const transcript = String(data.transcript || '').trim();
-  if (!transcript) {
-    throw new Error(data.detail || 'Could not transcribe the audio.');
-  }
-
-  if (input) {
-    input.value = transcript;
-  }
-
-  const inferredLanguage = data.language_code || detectSpeechLanguageCode(transcript, languageCode || getPreferredRecognitionLanguage());
-  await sendMessage(transcript, { forceLanguageCode: inferredLanguage });
-}
-
-async function startAudioRecording() {
-  const chat = getActiveChat();
-  const lang = chat?.lastAnswerLanguage || getPreferredRecognitionLanguage();
-  const mimeType = getSupportedRecordingMimeType();
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder || !mimeType) {
-    return false;
-  }
-
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  state.mediaStream = stream;
-  state.recordedChunks = [];
-  state.mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-  state.mediaRecorder.ondataavailable = (event) => {
-    if (event.data && event.data.size > 0) {
-      state.recordedChunks.push(event.data);
-    }
-  };
-  state.mediaRecorder.start();
-  setMicButtonState(true, lang);
-  return true;
-}
-
-async function stopAudioRecording() {
-  const recorder = state.mediaRecorder;
-  const chat = getActiveChat();
-  const lang = chat?.lastAnswerLanguage || getPreferredRecognitionLanguage();
-  if (!recorder) return false;
-
-  setMicButtonState(false, lang);
-
-  await new Promise((resolve) => {
-    recorder.onstop = () => resolve();
-    recorder.stop();
-  });
-
-  try {
-    await transcribeRecordedAudio();
-  } catch (err) {
-    appendMessage(`${uiText('voiceError', lang)}: ${err.message}`, 'bot', { languageCode: lang });
-  }
-  return true;
 }
 
 function hasVoiceForLanguage(languageCode) {
@@ -1111,97 +974,84 @@ function setupVoiceSupport() {
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const micBtn = document.getElementById('micBtn');
-  const canRecordAudio = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder && getSupportedRecordingMimeType());
 
-  if (!canRecordAudio && !SpeechRecognition) {
+  if (!SpeechRecognition) {
     micBtn.disabled = true;
     micBtn.title = uiText('voiceUnavailable', 'en-IN');
     return;
   }
 
-  if (SpeechRecognition) {
-    state.recognition = new SpeechRecognition();
-    state.recognition.continuous = true;
-    state.recognition.interimResults = true;
-    state.recognition.maxAlternatives = 1;
+  state.recognition = new SpeechRecognition();
+  state.recognition.continuous = true;
+  state.recognition.interimResults = true;
+  state.recognition.maxAlternatives = 1;
 
-    state.recognition.onstart = () => {
-      const lang = getActiveChat()?.lastAnswerLanguage || getPreferredRecognitionLanguage();
-      setMicButtonState(true, lang);
-    };
+  state.recognition.onstart = () => {
+    const lang = getActiveChat()?.lastAnswerLanguage || getPreferredRecognitionLanguage();
+    state.isRecording = true;
+    micBtn.classList.add('recording');
+    micBtn.setAttribute('aria-label', uiText('stopVoice', lang));
+    micBtn.title = uiText('stopVoice', lang);
+  };
 
-    state.recognition.onend = () => {
-      const lang = getActiveChat()?.lastAnswerLanguage || 'en-IN';
-      setMicButtonState(false, lang);
-    };
+  state.recognition.onend = () => {
+    const lang = getActiveChat()?.lastAnswerLanguage || 'en-IN';
+    state.isRecording = false;
+    micBtn.classList.remove('recording');
+    micBtn.setAttribute('aria-label', uiText('startVoice', lang));
+    micBtn.title = uiText('startVoice', lang);
+  };
 
-    state.recognition.onerror = (event) => {
-      const lang = getActiveChat()?.lastAnswerLanguage || 'en-IN';
-      appendMessage(`${uiText('voiceError', lang)}: ${event.error}`, 'bot', { languageCode: lang });
-    };
+  state.recognition.onerror = (event) => {
+    const lang = getActiveChat()?.lastAnswerLanguage || 'en-IN';
+    appendMessage(`${uiText('voiceError', lang)}: ${event.error}`, 'bot', { languageCode: lang });
+  };
 
-    state.recognition.onresult = async (event) => {
-      let finalCombined = '';
-      let interim = '';
+  state.recognition.onresult = async (event) => {
+    let finalCombined = '';
+    let interim = '';
 
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const t = event.results[i][0].transcript || '';
-        if (event.results[i].isFinal) {
-          finalCombined += `${t} `;
-        } else {
-          interim += `${t} `;
-        }
+    for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      const t = event.results[i][0].transcript || '';
+      if (event.results[i].isFinal) {
+        finalCombined += `${t} `;
+      } else {
+        interim += `${t} `;
       }
+    }
 
-      const input = document.getElementById('messageInput');
-      const composed = `${finalCombined}${interim}`.trim();
-      if (composed) input.value = composed;
+    const input = document.getElementById('messageInput');
+    const composed = `${finalCombined}${interim}`.trim();
+    if (composed) input.value = composed;
 
-      const finalTranscript = finalCombined.trim();
-      if (!finalTranscript) return;
+    const finalTranscript = finalCombined.trim();
+    if (!finalTranscript) return;
 
-      const chat = getActiveChat();
-      const inferredLanguage = detectSpeechLanguageCode(finalTranscript, chat?.lastAnswerLanguage || getPreferredRecognitionLanguage());
-      const apiBase = getApiBase();
+    const chat = getActiveChat();
+    const inferredLanguage = detectSpeechLanguageCode(finalTranscript, chat?.lastAnswerLanguage || getPreferredRecognitionLanguage());
+    const apiBase = getApiBase();
 
-      try {
-        await fetch(`${apiBase}/voice/stt`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transcript_hint: finalTranscript.trim(), language_code: inferredLanguage }),
-        });
-      } catch (_err) {
-        // best-effort backend hook
-      }
+    try {
+      await fetch(`${apiBase}/voice/stt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript_hint: finalTranscript.trim(), language_code: inferredLanguage }),
+      });
+    } catch (_err) {
+      // best-effort backend hook
+    }
 
-      state.recognition.stop();
-      await sendMessage(finalTranscript, { forceLanguageCode: inferredLanguage });
-    };
-  }
+    state.recognition.stop();
+    await sendMessage(finalTranscript, { forceLanguageCode: inferredLanguage });
+  };
 
-  micBtn.addEventListener('click', async () => {
+  micBtn.addEventListener('click', () => {
+    if (!state.recognition) return;
     if (state.isRecording) {
-      if (state.mediaRecorder) {
-        await stopAudioRecording();
-        return;
-      }
-      if (state.recognition) {
-        state.recognition.stop();
-      }
+      state.recognition.stop();
       return;
     }
 
-    if (canRecordAudio) {
-      try {
-        const started = await startAudioRecording();
-        if (started) return;
-      } catch (err) {
-        const lang = getActiveChat()?.lastAnswerLanguage || 'en-IN';
-        appendMessage(`${uiText('voiceError', lang)}: ${err.message}`, 'bot', { languageCode: lang });
-      }
-    }
-
-    if (!state.recognition) return;
     const chat = getActiveChat();
     const lang = normalizeLangForSpeech(chat?.lastAnswerLanguage || getPreferredRecognitionLanguage());
     state.recognition.lang = lang;
