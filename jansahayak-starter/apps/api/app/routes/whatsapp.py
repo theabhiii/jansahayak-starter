@@ -280,6 +280,43 @@ def _resolve_language_selection(user_input: str) -> str | None:
     return None
 
 
+def _menu_lines_from_text(text: str) -> tuple[list[str], list[str]]:
+    intro_lines: list[str] = []
+    menu_lines: list[str] = []
+    in_menu = False
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if re.match(r"^\d+\.\s+", line):
+            in_menu = True
+            menu_lines.append(re.sub(r"^\d+\.\s+", "", line).strip())
+            continue
+        if not in_menu:
+            intro_lines.append(line)
+    return intro_lines, menu_lines
+
+
+def _build_menu_audio_text(session_id: str, text: str, language_code: str | None = None) -> str:
+    intro_lines, menu_lines = _menu_lines_from_text(text)
+    if not menu_lines:
+        return text
+
+    intro = " ".join(intro_lines).strip()
+    if len(menu_lines) == 1:
+        choices = menu_lines[0]
+    elif len(menu_lines) == 2:
+        choices = f"{menu_lines[0]}, or {menu_lines[1]}"
+    else:
+        choices = ", ".join(menu_lines[:-1]) + f", or {menu_lines[-1]}"
+
+    spoken = "You can choose from the following options:"
+    if intro:
+        spoken = f"{intro} {spoken}"
+    spoken = f"{spoken} {choices}. You can reply by speaking your choice."
+    return _localize_text(session_id, spoken, language_code=language_code)
+
+
 def _feedback_prompt(session_id: str, language_code: str) -> str:
     lines = [
         _ui_text(session_id, "helpful_prompt", language_code=language_code),
@@ -654,18 +691,26 @@ async def twilio_webhook(request: Request):
 
     parts = _chunk_message(reply_text)
 
-    # Generate TTS audio for the first chunk (skip menu/numbered lists — they don't read well).
+    # Generate TTS audio for the first chunk. For menus, keep the text menu intact
+    # but speak a conversational version that works better in WhatsApp voice replies.
     audio_url: str | None = None
     first_part = parts[0] if parts else ""
     is_menu = any(line.strip().startswith(("1.", "2.", "3.")) for line in first_part.splitlines())
-    if first_part and not is_menu and _should_send_audio_reply(from_number):
+    if first_part and _should_send_audio_reply(from_number):
         session_lang = orchestrator.session_language_memory.get(from_number, "en-IN")
-        tts = sarvam.text_to_speech(text=first_part, language_code=session_lang)
+        tts_text = _build_menu_audio_text(from_number, first_part, language_code=session_lang) if is_menu else first_part
+        tts = sarvam.text_to_speech(text=tts_text, language_code=session_lang)
         if tts.get("status") == "ok" and tts.get("audio_base64"):
             audio_url = _store_audio_and_url(
                 tts["audio_base64"],
                 request,
                 audio_extension=tts.get("audio_extension"),
+            )
+            logger.info(
+                "whatsapp_audio_reply_generated from=%s is_menu=%s text_chars=%s",
+                from_number,
+                is_menu,
+                len(tts_text),
             )
         else:
             logger.warning(
