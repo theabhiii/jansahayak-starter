@@ -9,7 +9,6 @@ from xml.sax.saxutils import escape
 from ..core.config import get_settings
 from ..models.schemas import WhatsAppWebhookRequest
 from ..services.orchestrator import Orchestrator
-from ..services.request_inspector import inspector
 from ..services.sarvam_service import SarvamService
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
@@ -455,17 +454,7 @@ def _handle_whatsapp_user_input(session_id: str, incoming_message: str) -> str:
 
 
 def _public_base_url() -> str | None:
-    """Return a public base URL for Twilio media callbacks."""
-    settings = get_settings()
-    if settings.public_base_url:
-        return settings.public_base_url
-
-    railway_public_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
-    if railway_public_domain:
-        if railway_public_domain.startswith(("http://", "https://")):
-            return railway_public_domain
-        return f"https://{railway_public_domain}"
-
+    """Return the public ngrok URL if available, else None."""
     try:
         import httpx as _httpx
         resp = _httpx.get("http://localhost:4040/api/tunnels", timeout=1.0)
@@ -516,7 +505,7 @@ def webhook(payload: WhatsAppWebhookRequest):
         incoming_message=payload.message,
     )
     reply_text = _with_end_session_option(payload.from_number, reply_text)
-    response = {
+    return {
         "to": payload.from_number,
         "channel": "whatsapp-mock",
         "reply": reply_text,
@@ -525,14 +514,6 @@ def webhook(payload: WhatsAppWebhookRequest):
             "pending_follow_up_options": len(_pending_follow_up_options.get(payload.from_number, [])),
         },
     }
-    inspector.record(
-        path="/whatsapp/webhook",
-        method="POST",
-        channel="whatsapp-mock",
-        request_data=payload.model_dump(),
-        response_data=response,
-    )
-    return response
 
 
 @router.post("/twilio", response_class=PlainTextResponse)
@@ -669,33 +650,7 @@ async def twilio_webhook(request: Request):
             messages_xml += f"<Message>{escape(part)}</Message>"
 
     twiml = f"<?xml version='1.0' encoding='UTF-8'?><Response>{messages_xml}</Response>"
-    inspector.record(
-        path=str(request.url.path),
-        method=request.method,
-        channel="whatsapp-twilio",
-        request_data={
-            "from_number": from_number,
-            "body": body,
-            "message_sid": message_sid,
-            "num_media": media_count,
-            "media_content_type_0": media_content_type_0,
-            "media_url_0": media_url_0,
-            "form": dict(form),
-        },
-        response_data={
-            "reply_text": reply_text,
-            "message_parts": parts,
-            "audio_url": audio_url,
-            "twiml": twiml,
-        },
-    )
     return PlainTextResponse(content=twiml, media_type="application/xml")
-
-
-@router.post("/twilio/webhook", response_class=PlainTextResponse)
-async def twilio_webhook_alias(request: Request):
-    """Compatibility alias for Twilio webhook configuration on hosted deployments."""
-    return await twilio_webhook(request)
 
 
 @router.get("/twilio")
@@ -705,14 +660,4 @@ def twilio_webhook_status():
         "endpoint": "/whatsapp/twilio",
         "method": "POST",
         "message": "This endpoint is active. Twilio should send POST webhooks here.",
-    }
-
-
-@router.get("/twilio/webhook")
-def twilio_webhook_alias_status():
-    return {
-        "status": "ok",
-        "endpoint": "/whatsapp/twilio/webhook",
-        "method": "POST",
-        "message": "This alias is active. Twilio can also send POST webhooks here.",
     }

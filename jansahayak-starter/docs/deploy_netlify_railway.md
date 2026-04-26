@@ -17,7 +17,6 @@ This setup gives you:
    Recommended minimum:
    - `APP_ENV=prod`
    - `DEBUG=false`
-   - `PUBLIC_BASE_URL=https://your-api.up.railway.app`
    - `SARVAM_API_KEY=...`
    - any other keys you need from `.env.example`
 6. Deploy and copy the Railway backend URL.
@@ -25,8 +24,6 @@ This setup gives you:
    - `https://your-api.up.railway.app`
 7. Verify it works:
    - `GET https://your-api.up.railway.app/`
-   - `GET https://your-api.up.railway.app/whatsapp/twilio`
-   - `GET https://your-api.up.railway.app/inspect`
 
 ## 2) Frontend on Netlify
 
@@ -67,12 +64,6 @@ This means:
 3. Send a message in web chat.
 4. Confirm `GET /` and `POST /chat` work.
 5. Test voice and WhatsApp mock flow if needed.
-6. In Twilio Sandbox or Messaging webhook settings, use one of these POST URLs:
-   - `https://your-api.up.railway.app/whatsapp/twilio`
-   - `https://your-api.up.railway.app/whatsapp/twilio/webhook`
-7. Open the request inspector in your browser to review recent incoming requests and app responses:
-   - `https://your-api.up.railway.app/inspect`
-   - JSON feed: `https://your-api.up.railway.app/inspect/requests`
 
 ## 5) Notes
 

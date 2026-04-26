@@ -43,12 +43,3 @@ Request:
   "name": "Citizen Demo"
 }
 ```
-
-## POST /whatsapp/twilio
-Twilio WhatsApp webhook endpoint for form-encoded POST requests.
-
-## GET /inspect
-Browser dashboard for recent captured requests and generated responses.
-
-## GET /inspect/requests
-JSON feed of recent captured requests and generated responses.

@@ -35,7 +35,6 @@ class Settings:
     app_env: str = os.getenv('APP_ENV', 'local')
     app_name: str = os.getenv('APP_NAME', 'JanSahayak API')
     debug: bool = os.getenv('DEBUG', 'true').lower() == 'true'
-    public_base_url: str = os.getenv('PUBLIC_BASE_URL', '').rstrip('/')
     sarvam_api_key: str = os.getenv('SARVAM_API_KEY', '')
     sarvam_base_url: str = os.getenv('SARVAM_BASE_URL', 'https://api.sarvam.ai')
     sarvam_chat_url: str = os.getenv('SARVAM_CHAT_URL', 'https://api.sarvam.ai/v1/chat/completions')
