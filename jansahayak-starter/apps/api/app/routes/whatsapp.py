@@ -1,6 +1,7 @@
 import base64
 import logging
 from pathlib import Path
+import re
 import time
 import uuid as _uuid
 
