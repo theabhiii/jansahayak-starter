@@ -539,6 +539,29 @@ class SarvamService:
         cleaned = "\n".join(pruned).strip()
         return cleaned or raw
 
+    def _describe_upstream_error(self, exc: Exception) -> str:
+        if isinstance(exc, httpx.HTTPStatusError):
+            response = exc.response
+            status = response.status_code if response is not None else "unknown"
+            try:
+                payload = response.json() if response is not None else {}
+            except Exception:
+                payload = {}
+
+            if isinstance(payload, dict):
+                error = payload.get("error")
+                if isinstance(error, dict):
+                    message = error.get("message") or error.get("code")
+                    if message:
+                        return f"Upstream request failed with HTTP {status}: {message}"
+                detail = payload.get("detail")
+                if isinstance(detail, str) and detail.strip():
+                    return f"Upstream request failed with HTTP {status}: {detail.strip()}"
+
+            return f"Upstream request failed with HTTP {status}."
+
+        return str(exc) or exc.__class__.__name__
+
     def transcribe_audio_bytes(
         self,
         *,
@@ -559,14 +582,15 @@ class SarvamService:
 
         if self._sdk_client is not None:
             try:
-                codec = self._content_type_to_codec(mime_type)
                 file_tuple = (file_name, audio_bytes, mime_type)
                 transcribe_kwargs: dict[str, Any] = {
                     "file": file_tuple,
-                    "model": "saarika:v2.5",
+                    "model": "saaras:v3",
                     "mode": "transcribe",
-                    "input_audio_codec": codec,
                 }
+                codec = self._content_type_to_codec(mime_type)
+                if codec:
+                    transcribe_kwargs["input_audio_codec"] = codec
                 if normalized_language and normalized_language != "unknown":
                     transcribe_kwargs["language_code"] = normalized_language
                 resp = self._sdk_client.speech_to_text.transcribe(**transcribe_kwargs)
@@ -595,12 +619,21 @@ class SarvamService:
             except Exception as exc:
                 logger.warning("sarvam_stt_transcribe_failed err=%s", str(exc))
 
+        http_fallback = self._transcribe_audio_via_rest(
+            audio_bytes=audio_bytes,
+            file_name=file_name,
+            mime_type=mime_type,
+            language_code=language_code,
+        )
+        if http_fallback.get("transcript"):
+            return http_fallback
+
         return {
-            "status": "mocked",
-            "detail": "STT unavailable, returning empty transcript fallback.",
+            "status": http_fallback.get("status", "mocked"),
+            "detail": http_fallback.get("detail", "STT unavailable, returning empty transcript fallback."),
             "transcript": "",
             "language_code": normalize_language_code(language_code) or "en-IN",
-            "provider": "stt-fallback",
+            "provider": http_fallback.get("provider", "stt-fallback"),
         }
 
     def transcribe_audio_url(
@@ -669,6 +702,12 @@ class SarvamService:
                 }
         except Exception as exc:
             logger.warning("sarvam_tts_failed err=%s", str(exc))
+            return {
+                "status": "error",
+                "detail": self._describe_upstream_error(exc),
+                "audio_base64": None,
+                "language_code": normalized_language,
+            }
         return {"status": "error", "detail": "TTS failed", "audio_base64": None, "language_code": normalized_language}
 
     def speech_to_text(
@@ -678,7 +717,7 @@ class SarvamService:
         audio_base64: str | None = None,
         mime_type: str | None = None,
     ) -> dict:
-        normalized_language = normalize_language_code(language_code) or "en-IN"
+        normalized_language = normalize_language_code(language_code)
         if audio_base64:
             try:
                 audio_bytes = base64.b64decode(audio_base64, validate=True)
@@ -690,15 +729,31 @@ class SarvamService:
                 )
                 if stt.get("transcript"):
                     return stt
+                if not transcript_hint:
+                    return {
+                        "status": stt.get("status", "error"),
+                        "detail": stt.get("detail", "Transcription failed."),
+                        "transcript": "",
+                        "language_code": stt.get("language_code") or normalized_language or "en-IN",
+                        "provider": stt.get("provider", "stt-fallback"),
+                    }
             except Exception as exc:
                 logger.warning("stt_audio_base64_decode_failed err=%s", str(exc))
+                if not transcript_hint:
+                    return {
+                        "status": "error",
+                        "detail": "Invalid base64 audio payload.",
+                        "transcript": "",
+                        "language_code": normalized_language or "en-IN",
+                        "provider": "stt-base64-error",
+                    }
 
         if transcript_hint:
             return {
                 "status": "mocked",
                 "detail": "Using transcript hint fallback.",
                 "transcript": transcript_hint,
-                "language_code": normalized_language,
+                "language_code": normalized_language or "en-IN",
                 "provider": "transcript-hint",
             }
 
@@ -706,27 +761,78 @@ class SarvamService:
             "status": "mocked",
             "detail": "No transcript available. Provide audio_base64 or transcript_hint.",
             "transcript": "",
-            "language_code": normalized_language,
+            "language_code": normalized_language or "en-IN",
             "provider": "stt-fallback",
         }
 
-    def _content_type_to_codec(self, content_type: str) -> str:
+    def _transcribe_audio_via_rest(
+        self,
+        *,
+        audio_bytes: bytes,
+        file_name: str,
+        mime_type: str,
+        language_code: str | None,
+    ) -> dict[str, Any]:
+        if not self.is_configured():
+            return {
+                "status": "mocked",
+                "detail": "Sarvam STT is not configured.",
+                "transcript": "",
+                "language_code": normalize_language_code(language_code) or "en-IN",
+                "provider": "stt-rest-unconfigured",
+            }
+
+        normalized_language = normalize_language_code(language_code) or "unknown"
+        headers = {"api-subscription-key": self.settings.sarvam_api_key}
+        data: dict[str, str] = {
+            "model": "saaras:v3",
+            "mode": "transcribe",
+        }
+        codec = self._content_type_to_codec(mime_type)
+        if codec:
+            data["input_audio_codec"] = codec
+        if normalized_language and normalized_language != "unknown":
+            data["language_code"] = normalized_language
+
+        try:
+            with httpx.Client(timeout=45.0) as client:
+                response = client.post(
+                    f"{self.settings.sarvam_base_url.rstrip('/')}/speech-to-text",
+                    headers=headers,
+                    data=data,
+                    files={"file": (file_name, audio_bytes, mime_type)},
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except Exception as exc:
+            logger.warning("sarvam_stt_rest_failed err=%s", str(exc))
+            return {
+                "status": "error",
+                "detail": self._describe_upstream_error(exc),
+                "transcript": "",
+                "language_code": normalize_language_code(language_code) or "en-IN",
+                "provider": "stt-rest-error",
+            }
+
+        transcript = (payload.get("transcript") or "").strip() if isinstance(payload, dict) else ""
+        resolved_language = normalize_language_code(payload.get("language_code")) if isinstance(payload, dict) else None
+        return {
+            "status": "ok" if transcript else "error",
+            "detail": "Transcription successful" if transcript else "Sarvam REST STT returned an empty transcript.",
+            "transcript": transcript,
+            "language_code": resolved_language or (normalize_language_code(language_code) or "en-IN"),
+            "provider": "sarvam-stt-rest",
+        }
+
+    def _content_type_to_codec(self, content_type: str) -> str | None:
         lowered = (content_type or "").lower()
-        if "wav" in lowered:
-            return "wav"
-        if "mpeg" in lowered or "mp3" in lowered:
-            return "mp3"
-        if "aac" in lowered:
-            return "aac"
-        if "webm" in lowered:
-            return "webm"
-        if "m4a" in lowered or "mp4" in lowered:
-            return "mp4"
-        if "flac" in lowered:
-            return "flac"
-        if "opus" in lowered or "ogg" in lowered:
-            return "ogg"
-        return "ogg"
+        if "pcm_s16le" in lowered:
+            return "pcm_s16le"
+        if "pcm_l16" in lowered:
+            return "pcm_l16"
+        if "pcm_raw" in lowered:
+            return "pcm_raw"
+        return None
 
     def _guess_audio_filename(self, content_type: str) -> str:
         lowered = (content_type or "").lower()
